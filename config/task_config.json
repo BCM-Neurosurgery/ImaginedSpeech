@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "display": {
+    "screen_index": -1,
+    "background_rgb": [0, 0, 0],
+    "text_rgb": [255, 255, 255],
+    "font_name": "Arial",
+    "font_size": 34,
+    "debug_windowed": true,
+    "debug_window_rect": [100, 100, 1100, 700],
+    "skip_sync_tests": true
+  },
+  "launcher": {
+    "title": "Imagined Speech",
+    "position": [500, 300, 420, 390]
+  },
+  "placeholder": {
+    "duration_seconds": 2.0
+  },
+  "block0": {
+    "content_file": "instructions/block0_instructions.json",
+    "title_size": 46,
+    "body_size": 32,
+    "footer_size": 22,
+    "horizontal_margin_percent": 12,
+    "auto_advance_seconds": 0
+  },
+  "block1": {
+    "content_file": "stories/block1_stories.json",
+    "title_size": 44,
+    "question_size": 34,
+    "choice_size": 30,
+    "footer_size": 21,
+    "selected_rgb": [70, 150, 255],
+    "highlight_rgb": [255, 220, 80],
+    "test_auto_advance_seconds": 0,
+    "test_max_story_seconds": 0
+  },
+  "block2": {
+    "content_file": "speech/block2_manifest.json",
+    "reveal_seconds": 0.5,
+    "word_action_seconds": 2.0,
+    "phrase_action_seconds": 3.0,
+    "cue_square_size_px": 180,
+    "stimulus_text_size": 48,
+    "action_text_size": 42,
+    "use_schedule_silence": true,
+    "use_schedule_iti": true,
+    "default_silence_seconds": 1.25,
+    "default_iti_seconds": 1.25,
+    "test_max_trials": 0,
+    "test_audio_max_seconds": 0,
+    "test_timing_scale": 1.0,
+    "test_early_end_trials": []
+  },
+  "block3": {
+    "content_file": "images/block3_manifest.json",
+    "image_on_seconds": 0.5,
+    "image_off_seconds": 0.5,
+    "test_max_trials": 0,
+    "test_response_trials": []
+  },
+  "block4": {
+    "content_file": "surveys/vviq.json",
+    "context_size": 25,
+    "question_size": 31,
+    "choice_size": 23,
+    "footer_size": 19,
+    "selected_rgb": [70, 150, 255],
+    "highlight_rgb": [255, 220, 80],
+    "test_auto_advance_seconds": 0
+  },
+  "keys": {
+    "abort": "ESCAPE"
+  },
+  "photodiode": {
+    "enabled": false,
+    "position": "bottom_left",
+    "size_px": [100, 100],
+    "margin_px": 20,
+    "on_rgb": [255, 255, 255],
+    "off_rgb": [0, 0, 0]
+  },
+  "cbmex": {
+    "enabled": false,
+    "task_name": "ImaginedSpeech",
+    "comment_rgba": 16777215,
+    "comment_charset": 0
+  },
+  "paths": {
+    "task_data": "task_data",
+    "output": "output",
+    "patient_data": "C:\\Users\\EMU - Behavior\\Documents\\MATLAB\\PatientData"
+  }
+}
