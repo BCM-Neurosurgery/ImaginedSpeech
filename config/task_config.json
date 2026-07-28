@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
   "display": {
-    "screen_index": 0,
+    "screen_index": 2,
     "background_rgb": [0, 0, 0],
     "text_rgb": [255, 255, 255],
     "font_name": "Arial",
     "font_size": 34,
-    "debug_windowed": true,
+    "debug_windowed": false,
     "debug_window_rect": [100, 100, 1100, 700],
     "skip_sync_tests": true
   },
@@ -38,6 +38,9 @@
   },
   "block2": {
     "content_file": "speech/block2_manifest.json",
+    "presentation_mode": "both",
+    "reading_only_word_seconds": 0.5,
+    "reading_only_phrase_seconds": 1.0,
     "reveal_seconds": 0.5,
     "word_action_seconds": 2.0,
     "phrase_action_seconds": 3.0,
@@ -57,6 +60,7 @@
     "content_file": "images/block3_manifest.json",
     "image_on_seconds": 0.5,
     "image_off_seconds": 0.5,
+    "image_display_fraction": 0.6,
     "test_max_trials": 0,
     "test_response_trials": []
   },
@@ -71,7 +75,8 @@
     "test_auto_advance_seconds": 0
   },
   "keys": {
-    "abort": "ESCAPE"
+    "abort": "ESCAPE",
+    "deselect": "BackSpace"
   },
   "photodiode": {
     "enabled": false,
@@ -87,9 +92,25 @@
     "comment_rgba": 16777215,
     "comment_charset": 0
   },
+  "audio_sync": {
+    "enabled": false,
+    "device_index": -1,
+    "sample_rate": 44100,
+    "volume": 0.3,
+    "tones": {
+      "block_start": { "frequency_hz": 1000, "duration_ms": 100 },
+      "block_end": { "frequency_hz": 500, "duration_ms": 100 },
+      "block1_question_onset": { "frequency_hz": 1400, "duration_ms": 60 },
+      "block2_reading_stimulus_onset": { "frequency_hz": 1400, "duration_ms": 60 },
+      "block2_early_response": { "frequency_hz": 900, "duration_ms": 60 },
+      "block3_image_onset": { "frequency_hz": 1400, "duration_ms": 60 },
+      "block3_response": { "frequency_hz": 900, "duration_ms": 60 },
+      "block4_question_onset": { "frequency_hz": 1400, "duration_ms": 60 }
+    }
+  },
   "paths": {
     "task_data": "task_data",
     "output": "output",
-    "patient_data": "C:\\Users\\EMU - Behavior\\Documents\\MATLAB\\PatientData"
+    "patient_data": "C:\\Users\\lizzi\\Documents\\MATLAB\\PatientData"
   }
 }

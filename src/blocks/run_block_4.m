@@ -8,8 +8,8 @@ end
 oldSkip=Screen('Preference','SkipSyncTests',double(config.display.skip_sync_tests));
 screenCleanup=onCleanup(@()cleanupScreen4(oldSkip));
 KbName('UnifyKeyNames');
-keys.enter=KbName('Return'); keys.up=KbName('UpArrow'); keys.down=KbName('DownArrow'); keys.escape=KbName(config.keys.abort);
-allowed=zeros(1,256); allowed([keys.enter keys.up keys.down keys.escape])=1;
+keys.enter=KbName('Return'); keys.up=KbName('UpArrow'); keys.down=KbName('DownArrow'); keys.escape=KbName(config.keys.abort); keys.deselect=KbName(config.keys.deselect);
+allowed=zeros(1,256); allowed([keys.enter keys.up keys.down keys.escape keys.deselect])=1;
 KbQueueCreate([],allowed); KbQueueStart; queueCleanup=onCleanup(@cleanupQueue4);
 
 screens=Screen('Screens'); if config.display.screen_index<0, screenIndex=max(screens); else, screenIndex=config.display.screen_index; end
@@ -17,6 +17,9 @@ windowRect=[]; if config.display.debug_windowed, windowRect=config.display.debug
 [window,rect]=PsychImaging('OpenWindow',screenIndex,config.display.background_rgb(:)',windowRect);
 HideCursor(window); Screen('TextFont',window,config.display.font_name); ifi=Screen('GetFlipInterval',window);
 diodeRect=[config.photodiode.margin_px, RectHeight(rect)-config.photodiode.margin_px-config.photodiode.size_px(2), config.photodiode.margin_px+config.photodiode.size_px(1), RectHeight(rect)-config.photodiode.margin_px];
+
+toneState=init_sync_tones(config);
+toneCleanup=onCleanup(@()finish_sync_tones(toneState));
 
 runId=char(datetime('now','Format','yyyyMMdd_HHmmss_SSS'));
 eventFile=fopen(fullfile(config.session.directory,['block4_' runId '_events.csv']),'w');
@@ -27,15 +30,19 @@ fileCleanup=onCleanup(@()cleanupFiles4(eventFile,responseFile));
 fprintf(eventFile,'event_timestamp,event,section_id,item_id,choice_id,choice_value\n');
 fprintf(responseFile,'item_number,section_id,item_id,choice_id,choice_text,choice_value,question_onset,pick_time,submit_time\n');
 
+sources=struct('label',{'vviq_survey'},'path',{config.block4.content_file});
+save_run_snapshot(config,4,runId,sources);
+
 drawIntro4(window,rect,survey,config,diodeRect); Screen('Flip',window);
 if ~waitIntro4(keys,config.block4.test_auto_advance_seconds), task_killed; end
 KbReleaseWait; itemNumber=0; totalScore=0;
+play_sync_tone(toneState,'block_start');
 for sectionIndex=1:numel(survey.sections)
     section=survey.sections(sectionIndex);
     for sectionItem=1:numel(section.items)
         itemNumber=itemNumber+1; item=section.items(sectionItem); highlight=1; selected=0;
         drawItem4(window,rect,section,item,survey,highlight,selected,itemNumber,config,diodeRect,true);
-        onset=Screen('Flip',window); emit4(eventFile,config,onset,'QUESTION_SHOW',section.id,item.id,'',NaN);
+        onset=Screen('Flip',window); play_sync_tone(toneState,'block4_question_onset'); emit4(eventFile,config,onset,'QUESTION_SHOW',section.id,item.id,'',NaN);
         drawItem4(window,rect,section,item,survey,highlight,selected,itemNumber,config,diodeRect,false);
         Screen('Flip',window,onset+0.5*ifi); KbQueueFlush;
         pickTime=NaN;
@@ -48,6 +55,12 @@ for sectionIndex=1:numel(survey.sections)
                 selected=highlight; pickTime=actionTime; choice=survey.choices(selected);
                 drawItem4(window,rect,section,item,survey,highlight,selected,itemNumber,config,diodeRect,true);
                 flash=Screen('Flip',window); emit4(eventFile,config,flash,'ANSWER_PICK',section.id,item.id,choice.id,choice.value);
+                drawItem4(window,rect,section,item,survey,highlight,selected,itemNumber,config,diodeRect,false);
+                Screen('Flip',window,flash+0.5*ifi); KbQueueFlush; continue;
+            elseif action=="deselect" && selected>0
+                previousChoice=survey.choices(selected); selected=0; pickTime=NaN;
+                drawItem4(window,rect,section,item,survey,highlight,selected,itemNumber,config,diodeRect,true);
+                flash=Screen('Flip',window); emit4(eventFile,config,flash,'ANSWER_DESELECT',section.id,item.id,previousChoice.id,previousChoice.value);
                 drawItem4(window,rect,section,item,survey,highlight,selected,itemNumber,config,diodeRect,false);
                 Screen('Flip',window,flash+0.5*ifi); KbQueueFlush; continue;
             elseif action=="enter" && selected>0
@@ -75,7 +88,7 @@ end
 function drawDiode4(w,c,d,on), if ~c.photodiode.enabled,return,end,if on,color=c.photodiode.on_rgb;else,color=c.photodiode.off_rgb;end,Screen('FillRect',w,color(:)',d);end
 function emit4(f,c,t,e,section,item,choice,value), comment=sprintf('B4_%s q=%s',e,item);if ~isempty(choice),comment=sprintf('%s answer=%s',comment,choice);end,if strlength(comment)>127,error('ImaginedSpeech:CommentTooLong','Cbmex comment too long.'),end,send_task_event_comment(c,comment);fprintf(f,'%.9f,%s,%s,%s,%s,%.0f\n',t,e,section,item,choice,value);end
 function ok=waitIntro4(k,a),KbQueueFlush;ok=false;if a>0,d=GetSecs+a;else,d=Inf;end,while GetSecs<d,[p,x]=KbQueueCheck;if p&&x(k.escape)>0,return,end,if p&&x(k.enter)>0,ok=true;return,end,WaitSecs('YieldSecs',.005);end,ok=true;end
-function [a,t]=waitAction4(k,auto),if auto>0,d=GetSecs+auto;else,d=Inf;end,while GetSecs<d,[p,x]=KbQueueCheck;if p,if x(k.escape)>0,a="abort";t=x(k.escape);return,end,if x(k.up)>0,a="up";t=x(k.up);return,end,if x(k.down)>0,a="down";t=x(k.down);return,end,if x(k.enter)>0,a="enter";t=x(k.enter);return,end,end,WaitSecs('YieldSecs',.005);end,a="enter";t=GetSecs;end
+function [a,t]=waitAction4(k,auto),if auto>0,d=GetSecs+auto;else,d=Inf;end,while GetSecs<d,[p,x]=KbQueueCheck;if p,if x(k.escape)>0,a="abort";t=x(k.escape);return,end,if x(k.up)>0,a="up";t=x(k.up);return,end,if x(k.down)>0,a="down";t=x(k.down);return,end,if x(k.deselect)>0,a="deselect";t=x(k.deselect);return,end,if x(k.enter)>0,a="enter";t=x(k.enter);return,end,end,WaitSecs('YieldSecs',.005);end,a="enter";t=GetSecs;end
 function v=csv4(v),v=['"' strrep(char(v),'"','""') '"'];end
 function cleanupQueue4(),try,KbQueueStop;catch,end,try,KbQueueRelease;catch,end,end
 function cleanupFiles4(a,b),if a>=0,fclose(a);end,if b>=0,fclose(b);end,end

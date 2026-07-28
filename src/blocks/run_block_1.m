@@ -12,8 +12,9 @@ keys.enter = KbName('Return');
 keys.up = KbName('UpArrow');
 keys.down = KbName('DownArrow');
 keys.escape = KbName(config.keys.abort);
+keys.deselect = KbName(config.keys.deselect);
 allowed = zeros(1, 256);
-allowed([keys.enter, keys.up, keys.down, keys.escape]) = 1;
+allowed([keys.enter, keys.up, keys.down, keys.escape, keys.deselect]) = 1;
 KbQueueCreate([], allowed);
 KbQueueStart;
 queueCleanup = onCleanup(@cleanupBlock1Queue);
@@ -40,6 +41,9 @@ sampleRate = content.stories(1).sample_rate;
 state.audio = PsychPortAudio('Open', [], 1, 1, sampleRate, 2);
 audioCleanup = onCleanup(@() cleanupBlock1Audio(state.audio));
 
+toneState = init_sync_tones(config);
+toneCleanup = onCleanup(@() finish_sync_tones(toneState));
+
 if ~isfield(config, 'session') || ~isfolder(config.session.directory)
     error('ImaginedSpeech:MissingSession', 'Block 1 requires an initialized patient session.');
 end
@@ -57,6 +61,14 @@ fprintf(state.eventFile, 'timestamp,event,story_id,question_id,choice_id\n');
 fprintf(state.responseFile, ['story_id,question_id,choice_id,choice_text,' ...
     'correct_choice_id,is_correct,question_onset,pick_time,submit_time\n']);
 
+sources = struct('label', {'block1_manifest'}, 'path', {config.block1.content_file});
+for storySourceIndex = 1:numel(content.stories)
+    sources(end + 1) = struct('label', ['story_audio_' char(content.stories(storySourceIndex).id)], ...
+        'path', content.stories(storySourceIndex).audio_path); %#ok<AGROW>
+end
+save_run_snapshot(config, 1, runId, sources);
+
+play_sync_tone(toneState, 'block_start');
 for storyIndex = 1:numel(content.stories)
     story = content.stories(storyIndex);
     PsychPortAudio('FillBuffer', state.audio, story.audio_samples);
@@ -85,6 +97,7 @@ for storyIndex = 1:numel(content.stories)
         drawQuestion(window, rect, question, highlight, selected, content, ...
             config, diodeRect, true);
         questionOnset = Screen('Flip', window);
+        play_sync_tone(toneState, 'block1_question_onset');
         emitAfterPhotodiode(state, config, questionOnset, 'QUESTION_SHOW', ...
             story.id, question.id, '');
         drawQuestion(window, rect, question, highlight, selected, content, ...
@@ -111,6 +124,20 @@ for storyIndex = 1:numel(content.stories)
                 flipTime = Screen('Flip', window);
                 emitAfterPhotodiode(state, config, flipTime, 'ANSWER_PICK', ...
                     story.id, question.id, choice.id);
+                drawQuestion(window, rect, question, highlight, selected, content, ...
+                    config, diodeRect, false);
+                Screen('Flip', window, flipTime + 0.5 * ifi);
+                KbQueueFlush;
+                continue;
+            elseif action == "deselect" && selected > 0
+                previousChoice = question.choices(selected);
+                selected = 0;
+                pickTime = NaN;
+                drawQuestion(window, rect, question, highlight, selected, content, ...
+                    config, diodeRect, true);
+                flipTime = Screen('Flip', window);
+                emitAfterPhotodiode(state, config, flipTime, 'ANSWER_DESELECT', ...
+                    story.id, question.id, previousChoice.id);
                 drawQuestion(window, rect, question, highlight, selected, content, ...
                     config, diodeRect, false);
                 Screen('Flip', window, flipTime + 0.5 * ifi);
@@ -244,6 +271,7 @@ while GetSecs < deadline
         if first(keys.escape) > 0, action = "abort"; timestamp = first(keys.escape); return; end
         if first(keys.up) > 0, action = "up"; timestamp = first(keys.up); return; end
         if first(keys.down) > 0, action = "down"; timestamp = first(keys.down); return; end
+        if first(keys.deselect) > 0, action = "deselect"; timestamp = first(keys.deselect); return; end
         if first(keys.enter) > 0, action = "enter"; timestamp = first(keys.enter); return; end
         KbQueueFlush;
     end

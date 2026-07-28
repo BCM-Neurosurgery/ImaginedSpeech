@@ -9,6 +9,9 @@ oldSkipSyncTests = Screen('Preference', 'SkipSyncTests', ...
     double(config.display.skip_sync_tests));
 cleanup = onCleanup(@() cleanupBlock0(oldSkipSyncTests)); %#ok<NASGU>
 
+toneState = init_sync_tones(config);
+toneCleanup = onCleanup(@() finish_sync_tones(toneState));
+
 KbName('UnifyKeyNames');
 enterKeys = KbName('Return');
 abortKey = KbName(config.keys.abort);
@@ -45,6 +48,9 @@ wrapWidth = max(20, floor((screenWidth - 2 * margin) / ...
     (config.block0.body_size * 0.55)));
 
 for slideIndex = 1:numel(content.slides)
+    if slideIndex == 1
+        play_sync_tone(toneState, 'block_start');
+    end
     slide = content.slides(slideIndex);
     Screen('FillRect', window, config.display.background_rgb(:)');
 

@@ -29,6 +29,9 @@ for index = 1:numel(block.images)
 end
 textureCleanup = onCleanup(@() cleanupTextures(textures));
 
+toneState = init_sync_tones(config);
+toneCleanup = onCleanup(@() finish_sync_tones(toneState));
+
 runId = char(datetime('now', 'Format', 'yyyyMMdd_HHmmss_SSS'));
 eventFile = fopen(fullfile(config.session.directory, ['block3_' runId '_events.csv']), 'w');
 responseFile = fopen(fullfile(config.session.directory, ['block3_' runId '_responses.csv']), 'w');
@@ -38,9 +41,14 @@ fprintf(eventFile, 'event_timestamp,event,trial,image_name,key_timestamp\n');
 fprintf(responseFile, ['trial,image_name,image_type,schedule_repeat_flag,is_target,' ...
     'responded,response_time,reaction_time,outcome,image_onset\n']);
 
+sources = struct('label', {'block3_manifest', 'schedule'}, ...
+    'path', {config.block3.content_file, block.schedule_path});
+save_run_snapshot(config, 3, runId, sources);
+
 drawReady3(window, rect, block, config, diodeRect, false); Screen('Flip', window);
 if ~waitReady3(keys, config.block3.test_response_trials), task_killed; end
 KbReleaseWait; KbQueueFlush;
+play_sync_tone(toneState, 'block_start');
 
 trialCount = height(block.schedule);
 if config.block3.test_max_trials > 0, trialCount = min(trialCount, config.block3.test_max_trials); end
@@ -48,9 +56,10 @@ nextOnset = GetSecs + 2 * ifi;
 for trial = 1:trialCount
     row = block.schedule(trial, :);
     texture = textures(row.image_index);
-    destination = fitTextureRect(Screen('Rect', texture), rect, 0.8);
+    destination = fitTextureRect(Screen('Rect', texture), rect, config.block3.image_display_fraction);
     drawImage3(window, texture, destination, config, diodeRect, true);
     onset = Screen('Flip', window, nextOnset);
+    play_sync_tone(toneState, 'block3_image_onset');
     emit3(eventFile, config, onset, 'IMAGE_ONSET', trial, row.image_name, NaN);
     drawImage3(window, texture, destination, config, diodeRect, false);
     Screen('Flip', window, onset + 0.5 * ifi);
@@ -62,13 +71,13 @@ for trial = 1:trialCount
     autoRespond = ismember(trial, config.block3.test_response_trials);
     [responded, responseTime, aborted] = collectPhase(window, texture, destination, ...
         true, imageOffset, responded, responseTime, autoRespond, onset, keys, ...
-        config, diodeRect, eventFile, trial, row.image_name, ifi);
+        config, diodeRect, eventFile, trial, row.image_name, ifi, toneState);
     if aborted, task_killed; end
     Screen('FillRect', window, config.display.background_rgb(:)');
     drawDiode3(window, config, diodeRect, false); Screen('Flip', window, imageOffset);
     [responded, responseTime, aborted] = collectPhase(window, texture, destination, ...
         false, trialEnd, responded, responseTime, autoRespond, onset, keys, ...
-        config, diodeRect, eventFile, trial, row.image_name, ifi);
+        config, diodeRect, eventFile, trial, row.image_name, ifi, toneState);
     if aborted, task_killed; end
 
     if row.is_target && responded, outcome = 'hit';
@@ -86,7 +95,7 @@ Screen('Close', textures);
 textures(:) = 0;
 end
 
-function [responded, responseTime, aborted] = collectPhase(window, texture, destination, imageVisible, deadline, responded, responseTime, autoRespond, onset, keys, config, diodeRect, eventFile, trial, imageName, ifi)
+function [responded, responseTime, aborted] = collectPhase(window, texture, destination, imageVisible, deadline, responded, responseTime, autoRespond, onset, keys, config, diodeRect, eventFile, trial, imageName, ifi, toneState)
 aborted = false;
 while GetSecs < deadline
     [pressed, first] = KbQueueCheck;
@@ -96,6 +105,7 @@ while GetSecs < deadline
     if ~responded && (actual || simulated)
         if actual, responseTime = first(keys.enter); else, responseTime = GetSecs; end
         responded = true;
+        play_sync_tone(toneState, 'block3_response');
         if imageVisible, drawImage3(window, texture, destination, config, diodeRect, true);
         else, Screen('FillRect', window, config.display.background_rgb(:)'); drawDiode3(window, config, diodeRect, true); end
         flashTime = Screen('Flip', window);
