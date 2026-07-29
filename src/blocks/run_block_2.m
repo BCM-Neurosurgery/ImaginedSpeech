@@ -9,8 +9,8 @@ oldSkip = Screen('Preference', 'SkipSyncTests', double(config.display.skip_sync_
 screenCleanup = onCleanup(@() cleanupScreen(oldSkip));
 
 KbName('UnifyKeyNames');
-keys.enter = KbName('Return'); keys.escape = KbName(config.keys.abort);
-allowed = zeros(1, 256); allowed([keys.enter keys.escape]) = 1;
+keys.enter = KbName('Return'); keys.escape = KbName(config.keys.abort); keys.pause = KbName(config.keys.pause);
+allowed = zeros(1, 256); allowed([keys.enter keys.escape keys.pause]) = 1;
 KbQueueCreate([], allowed); KbQueueStart;
 queueCleanup = onCleanup(@cleanupQueue);
 
@@ -60,8 +60,11 @@ play_sync_tone(toneState, 'block_start');
 
 trialCount = height(block.schedule);
 if config.block2.test_max_trials > 0, trialCount = min(trialCount, config.block2.test_max_trials); end
+if config.block2.start_trial > trialCount
+    error('ImaginedSpeech:InvalidStartTrial', 'block2.start_trial (%d) exceeds the number of available trials (%d).', config.block2.start_trial, trialCount);
+end
 nextOnset = GetSecs + 2 * ifi;
-for trial = 1:trialCount
+for trial = config.block2.start_trial:trialCount
     row = block.schedule(trial, :);
     texture = textures(row.image_index);
     destination = fitTextureRect(Screen('Rect', texture), rect, config.block2.image_display_fraction);
@@ -77,20 +80,26 @@ for trial = 1:trialCount
     imageOffset = onset + config.block2.image_on_seconds;
     trialEnd = imageOffset + config.block2.image_off_seconds;
     autoRespond = ismember(trial, config.block2.test_response_trials);
-    [responded, responseTime, aborted, respFlashEnd] = collectPhase(window, texture, destination, ...
+    [responded, responseTime, aborted, respFlashEnd, paused1] = collectPhase(window, texture, destination, ...
         true, imageOffset, responded, responseTime, autoRespond, onset, keys, ...
         config, diodeRect, eventFile, trial, row.image_name, ifi, toneState);
     if aborted, task_killed; end
+    % Any pause during the image-on phase pushes imageOffset (and thus
+    % trialEnd) back by exactly the pause duration, so the image-on/image-off
+    % durations experienced by the participant are unaffected by the pause.
+    imageOffset = imageOffset + paused1;
+    trialEnd = trialEnd + paused1;
     % No flash/comment on the image-off transition itself -- only IMAGE_ONSET
     % and RESPONSE are marked. A RESPONSE flash landing near imageOffset was
     % otherwise liable to sit right next to this transition's own flash and
     % blend into it on the photodiode, which is what made proccing inconsistent.
     Screen('FillRect', window, config.display.background_rgb(:)');
     drawDiode2(window, config, diodeRect, false); Screen('Flip', window, imageOffset);
-    [responded, responseTime, aborted, respFlashEnd2] = collectPhase(window, texture, destination, ...
+    [responded, responseTime, aborted, respFlashEnd2, paused2] = collectPhase(window, texture, destination, ...
         false, trialEnd, responded, responseTime, autoRespond, onset, keys, ...
         config, diodeRect, eventFile, trial, row.image_name, ifi, toneState);
     if aborted, task_killed; end
+    trialEnd = trialEnd + paused2;
     if ~isnan(respFlashEnd2), respFlashEnd = respFlashEnd2; end
 
     if row.is_target && responded, outcome = 'hit';
@@ -116,12 +125,26 @@ end
 % double-free that can crash MATLAB outright rather than raising a catchable error.
 end
 
-function [responded, responseTime, aborted, flashEnd] = collectPhase(window, texture, destination, imageVisible, deadline, responded, responseTime, autoRespond, onset, keys, config, diodeRect, eventFile, trial, imageName, ifi, toneState)
+function [responded, responseTime, aborted, flashEnd, pausedSeconds] = collectPhase(window, texture, destination, imageVisible, deadline, responded, responseTime, autoRespond, onset, keys, config, diodeRect, eventFile, trial, imageName, ifi, toneState)
 aborted = false;
 flashEnd = NaN; % actual completion time of this call's RESPONSE flash, if any; NaN if no response occurred here
+pausedSeconds = 0; % total time spent paused during this call, for the caller to shift its own deadlines by
 while GetSecs < deadline
     [pressed, first] = KbQueueCheck;
     if pressed && first(keys.escape) > 0, aborted = true; return; end
+    if pressed && first(keys.pause) > 0
+        [pauseDuration, pausedAborted, onT, resT] = wait_for_pause_resume(window, config, diodeRect, ifi, keys, toneState);
+        emit2(eventFile, config, onT, 'PAUSE_ON', trial, imageName, NaN);
+        if pausedAborted, aborted = true; return; end
+        emit2(eventFile, config, resT, 'PAUSE_RESUME', trial, imageName, NaN);
+        deadline = deadline + pauseDuration;
+        pausedSeconds = pausedSeconds + pauseDuration;
+        if imageVisible, drawImage2(window, texture, destination, config, diodeRect, false);
+        else, Screen('FillRect', window, config.display.background_rgb(:)'); drawDiode2(window, config, diodeRect, false); end
+        Screen('Flip', window);
+        KbQueueFlush;
+        continue;
+    end
     simulated = autoRespond && ~responded && GetSecs >= onset + 0.05;
     actual = pressed && first(keys.enter) > 0;
     if ~responded && (actual || simulated)

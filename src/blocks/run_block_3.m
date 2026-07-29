@@ -13,8 +13,9 @@ keys.up = KbName('UpArrow');
 keys.down = KbName('DownArrow');
 keys.escape = KbName(config.keys.abort);
 keys.deselect = KbName(config.keys.deselect);
+keys.pause = KbName(config.keys.pause);
 allowed = zeros(1, 256);
-allowed([keys.enter, keys.up, keys.down, keys.escape, keys.deselect]) = 1;
+allowed([keys.enter, keys.up, keys.down, keys.escape, keys.deselect, keys.pause]) = 1;
 KbQueueCreate([], allowed);
 KbQueueStart;
 queueCleanup = onCleanup(@cleanupBlock3Queue);
@@ -77,26 +78,42 @@ for storySourceIndex = 1:numel(content.stories)
 end
 save_run_snapshot(config, 3, runId, sources);
 
-play_sync_tone(toneState, 'block_start');
-for storyIndex = 1:numel(content.stories)
-    story = content.stories(storyIndex);
-    PsychPortAudio('FillBuffer', state.audio, story.audio_samples);
-    drawReady(window, rect, story.title, content.ready_prompt, config, diodeRect, false);
-    Screen('Flip', window);
-    if ~waitForEnter(keys, config.block3.test_auto_advance_seconds)
-        task_killed;
-    end
+switch string(config.block3.start_position)
+    case "story_1", startStoryIndex = 1; skipStartAudio = false;
+    case "comprehension_1", startStoryIndex = 1; skipStartAudio = true;
+    case "story_2", startStoryIndex = 2; skipStartAudio = false;
+    case "comprehension_2", startStoryIndex = 2; skipStartAudio = true;
+end
 
-    drawListening(window, rect, content.listening_text, config, diodeRect, true);
-    targetTime = GetSecs + 2 * ifi;
-    PsychPortAudio('Start', state.audio, 1, targetTime, 0);
-    onset = Screen('Flip', window, targetTime);
-    emitAfterPhotodiode(state, config, onset, 'STORY_START', story.id, '', '');
-    drawListening(window, rect, content.listening_text, config, diodeRect, false);
-    Screen('Flip', window, onset + flashOff);
-    if ~waitForStory(state.audio, keys.escape, config.block3.test_max_story_seconds)
-        PsychPortAudio('Stop', state.audio, 0);
-        task_killed;
+play_sync_tone(toneState, 'block_start');
+for storyIndex = startStoryIndex:numel(content.stories)
+    story = content.stories(storyIndex);
+    % start_position lets a run resume mid-block: "comprehension_N" skips
+    % straight to story N's questions, entirely bypassing its ready screen
+    % and audio playback (only ever applies to the first story iterated,
+    % never a later one in the same run).
+    if ~(skipStartAudio && storyIndex == startStoryIndex)
+        PsychPortAudio('FillBuffer', state.audio, story.audio_samples);
+        drawReady(window, rect, story.title, content.ready_prompt, config, diodeRect, false);
+        Screen('Flip', window);
+        if ~waitForEnter(keys, config.block3.test_auto_advance_seconds)
+            task_killed;
+        end
+
+        drawListening(window, rect, content.listening_text, config, diodeRect, true);
+        targetTime = GetSecs + 2 * ifi;
+        PsychPortAudio('Start', state.audio, 1, targetTime, 0);
+        onset = Screen('Flip', window, targetTime);
+        emitAfterPhotodiode(state, config, onset, 'STORY_START', story.id, '', '');
+        drawListening(window, rect, content.listening_text, config, diodeRect, false);
+        Screen('Flip', window, onset + flashOff);
+        listeningRedraw = @() drawListening(window, rect, content.listening_text, config, diodeRect, false);
+        storyDuration = size(story.audio_samples, 2) / story.sample_rate;
+        if ~waitForStory(state.audio, keys, config.block3.test_max_story_seconds, ...
+                window, config, diodeRect, ifi, state, story, listeningRedraw, toneState, storyDuration)
+            PsychPortAudio('Stop', state.audio, 0);
+            task_killed;
+        end
     end
 
     for questionIndex = 1:numel(story.questions)
@@ -280,16 +297,44 @@ end
 proceed = true;
 end
 
-function proceed = waitForStory(audioHandle, escapeKey, maxSeconds)
-proceed = true; startTime = GetSecs; KbQueueFlush;
-while PsychPortAudio('GetStatus', audioHandle).Active
+function proceed = waitForStory(audioHandle, keys, maxSeconds, window, config, diodeRect, ifi, state, story, redrawFcn, toneState, storyDuration)
+% Deadline-driven (not PsychPortAudio('GetStatus',audioHandle).Active-driven):
+% the loop's stopping condition is the analytically-known story duration,
+% exactly like every other pausable phase in this task, rather than
+% repeatedly polling audio device status. An earlier version of this
+% function drove the while-loop off GetStatus().Active, and on real
+% hardware that left Escape/pause completely undetected for the entire
+% story -- reproduced in isolation (a synthetic tone exited its wait loop in
+% ~0.001s instead of the expected ~1.35s remaining after a simulated pause,
+% because a non-blocking PsychPortAudio Start can return before Active
+% actually flips true) and fixed by never letting audio-device status decide
+% how long this loop keeps polling for keys.
+proceed = true; playStart = GetSecs; deadline = playStart + storyDuration;
+if maxSeconds > 0, deadline = min(deadline, playStart + maxSeconds); end
+KbQueueFlush;
+while GetSecs < deadline
     [pressed, first] = KbQueueCheck;
-    if pressed && first(escapeKey) > 0, proceed = false; return; end
-    if maxSeconds > 0 && GetSecs - startTime >= maxSeconds
-        PsychPortAudio('Stop', audioHandle, 0); return;
+    if pressed && first(keys.escape) > 0, proceed = false; PsychPortAudio('Stop', audioHandle, 0); return; end
+    if pressed && first(keys.pause) > 0
+        positionSecs = PsychPortAudio('GetStatus', audioHandle).PositionSecs;
+        PsychPortAudio('Stop', audioHandle, 1);
+        [pauseDuration, aborted, onT, resT] = wait_for_pause_resume(window, config, diodeRect, ifi, keys, toneState);
+        emitAfterPhotodiode(state, config, onT, 'PAUSE_ON', story.id, '', '');
+        if aborted, proceed = false; return; end
+        emitAfterPhotodiode(state, config, resT, 'PAUSE_RESUME', story.id, '', '');
+        startSample = max(1, round(positionSecs * story.sample_rate) + 1);
+        if startSample <= size(story.audio_samples, 2)
+            PsychPortAudio('FillBuffer', audioHandle, story.audio_samples(:, startSample:end));
+            PsychPortAudio('Start', audioHandle, 1, 0, 1);
+        end
+        deadline = deadline + pauseDuration;
+        redrawFcn(); Screen('Flip', window);
+        KbQueueFlush;
+        continue;
     end
     WaitSecs('YieldSecs', 0.01);
 end
+PsychPortAudio('Stop', audioHandle, 0);
 end
 
 function [action, timestamp] = waitForQuestionAction(keys, autoSeconds)
