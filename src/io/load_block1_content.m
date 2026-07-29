@@ -12,7 +12,8 @@ schedule=readtable(schedulePath,'TextType','string'); audioManifest=readtable(au
 scheduleRequired=["trial_number","word","trial_type","silent_period_duration","inter_trial_interval_duration"];
 audioRequired=["stimulus_id","stimulus_text","audio_file"];
 if ~all(ismember(scheduleRequired,string(schedule.Properties.VariableNames)))||~all(ismember(audioRequired,string(audioManifest.Properties.VariableNames))), error('ImaginedSpeech:InvalidBlock1Data','CSV columns are invalid.'); end
-if height(schedule)~=540||numel(unique(schedule.trial_number))~=540||~isequal(schedule.trial_number,(1:540)'), error('ImaginedSpeech:InvalidBlock1Data','Schedule must contain ordered unique trials 1 through 540.'); end
+trialCount=height(schedule);
+if trialCount==0||numel(unique(schedule.trial_number))~=trialCount||~isequal(schedule.trial_number,(1:trialCount)'), error('ImaginedSpeech:InvalidBlock1Data','Schedule must contain ordered unique trials 1 through N with no gaps or duplicates.'); end
 allowed=["speaking","imagine speaking","visually imagine"];
 if any(~ismember(schedule.trial_type,allowed))||any(~isfinite(schedule.silent_period_duration))||any(schedule.silent_period_duration<0)||any(~isfinite(schedule.inter_trial_interval_duration))||any(schedule.inter_trial_interval_duration<0), error('ImaginedSpeech:InvalidBlock1Data','Schedule contains invalid trial types or durations.'); end
 if numel(unique(audioManifest.stimulus_text))~=height(audioManifest)||numel(unique(audioManifest.stimulus_id))~=height(audioManifest), error('ImaginedSpeech:InvalidBlock1Data','Audio manifest IDs and texts must be unique.'); end

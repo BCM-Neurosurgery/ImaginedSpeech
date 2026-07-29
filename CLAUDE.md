@@ -6,12 +6,12 @@ Build a MATLAB/Psychtoolbox experiment for an imagined-speech study. The launche
 
 The experiment must be data-driven. Instructions, stories, questions, words, phrases, audio, image sequences, survey items, and answer choices belong under `task_data/`; they must not be embedded in MATLAB source. All assets needed by a block are validated and loaded into memory before its first timed trial.
 
-The launcher, config loader, hardware adapters, and all five block runners are implemented. All five blocks are now fully data-driven and preload-validated end to end (instructions, the 540-trial schedule, the 200-trial image sequence, stories/questions, and the VVIQ survey all resolve to real, finalized `task_data/` content and pass their loaders). Current source material includes:
+The launcher, config loader, hardware adapters, and all five block runners are implemented. All five blocks are now fully data-driven and preload-validated end to end (the Block 1 speech/imagery schedule, the Block 2 image sequence, stories/questions, and the VVIQ survey all resolve to real, finalized `task_data/` content and pass their loaders). Block 1's and Block 2's schedule row counts are CSV-derived, not fixed — they can and do change as new schedule/sequence CSVs are swapped in; the loaders validate structure and content availability, never a specific count. Current source material includes:
 
 - `task_info/experimentalstructure.txt`: the original experiment outline.
 - `task_info/Vividness of Visual Imagery Questionnaire (VVIQ) (PaperSurvey.io).pdf`: the survey reference, transcribed into `task_data/surveys/vviq.json` (4 sections × 4 items, 5-point scale, documented scoring).
-- `task_data/speech/AAC_trial_schedule.csv` + `task_data/speech/block1_manifest.json` + `task_data/speech/audio_clips/`: the finalized 540-trial Block 1 schedule and its 45 decoded/mapped audio clips.
-- `task_data/images/`: 90 unique images and the finalized `block2_manifest.json` + `image_trial_sequence.csv` (200 trials, one-back targets marked).
+- `task_data/speech/AAC_trial_schedule.csv` + `task_data/speech/block1_manifest.json` + `task_data/speech/audio_clips/`: the Block 1 schedule (any row count) and its decoded/mapped audio clips.
+- `task_data/images/`: the image pool and the `block2_manifest.json` + `image_trial_sequence.csv` (any row count, one-back targets marked).
 - `task_data/stories/`: two MP3 stories, their DOCX source texts, and the finalized `block3_stories.json` manifest (2 stories, comprehension questions with answer keys).
 - `task_data/instructions/block0_instructions.json`: finalized instruction deck (7 slides).
 - `task_data/surveys/vviq.json`: finalized VVIQ runtime survey data.
@@ -28,7 +28,7 @@ Present instruction pages loaded from task data. Support forward/back navigation
 
 ### Block 1 — Randomized speech/imagery trials
 
-The current schedule has 540 randomized trials:
+The schedule's row count is not a fixed architectural constant — `load_block1_content.m` derives it from `AAC_trial_schedule.csv` itself (any number of ordered, gap-free, duplicate-free `trial_number` rows 1..N validates and runs correctly), so a new schedule CSV with a different trial count works without any code change, as long as its columns are formatted correctly and every stimulus it references resolves to an audio file in the manifest. The original reference design had 540 randomized trials:
 
 - 150 spoken-word trials: 30 words × 5 repetitions.
 - 150 imagined-speech word trials: 30 words × 5 repetitions.
@@ -48,13 +48,15 @@ When `presentation_mode` includes listening (`"listening"` or `"both"`), the sti
 
 Stimulus-to-audio mapping must be explicit in task data; do not derive correctness-critical filenames ad hoc. Store exactly one audio file per unique stimulus and join each schedule row to that file through the audio manifest. Decode every unique audio file before the first trial and fill PsychPortAudio buffers in advance where supported (skipped entirely when `presentation_mode` is `"reading"`, since no audio device is needed). The ElevenLabs utility is an offline preparation tool only and must never make network calls during an experiment.
 
-`config.block1.start_trial` (default 1) resumes a session partway through the 540-trial schedule instead of always starting at trial 1 — trials before it are never presented or logged (not skipped-and-marked, simply not run at all), matching the block's normal only-log-what-actually-ran behavior. A value exceeding the schedule's row count is a clear preflight error, not a silently empty block.
+`config.block1.start_trial` (default 1) resumes a session partway through the schedule instead of always starting at trial 1 — trials before it are never presented or logged (not skipped-and-marked, simply not run at all), matching the block's normal only-log-what-actually-ran behavior. A value exceeding the schedule's row count is a clear preflight error, not a silently empty block.
 
 ### Block 2 — Image encoding / one-back task
 
 Present a task-data-defined image sequence. Default timing from the existing outline is image on for 500 ms, then image off for 500 ms. Each image is displayed at `config.block2.image_display_fraction` (default 0.6) of the window's smaller dimension, configurable rather than hardcoded. The participant presses Enter when the current image is identical to the immediately preceding image. Preload all image pixels and create all Psychtoolbox textures before the first timed presentation. Log stimulus identity, one-back target status, response, accuracy, response time, and flip timestamps.
 
-`config.block2.start_trial` (default 1) resumes partway through the 200-trial image sequence, with the same semantics as Block 1's `start_trial` (skipped trials are simply never run, and an out-of-range value is a preflight error).
+Like Block 1, `load_block2_content.m` never assumed a fixed row count for `image_trial_sequence.csv` — any number of rows works as long as the columns are formatted correctly and every referenced `image_name` resolves to exactly one file under `task_data/images/`. The original reference design had 200 trials over 90 unique images.
+
+`config.block2.start_trial` (default 1) resumes partway through the sequence, with the same semantics as Block 1's `start_trial` (skipped trials are simply never run, and an out-of-range value is a preflight error).
 
 ### Block 3 — Stories and comprehension
 
@@ -169,7 +171,7 @@ Use incremental tabular logging plus a final MAT file as appropriate. Preserve t
 1. **Scaffold and contracts** — done: launcher/GUI, config loader and schema validation, task-data manifests, output naming, logging, cleanup.
 2. **Hardware adapters** — done: Psychtoolbox display/audio/input wrappers plus no-op/real photodiode and Cbmex synchronization adapters with canonical events (`send_task_event_comment`, `start_task_lifecycle`, `finish_task_lifecycle`).
 3. **Block 0** — done: data-driven paged instructions, 7 slides, forward/back navigation.
-4. **Block 1** — done: validates the 540-row schedule and shared audio manifest, preloads all 45 unique recordings, presents all five timed phases and three action types, supports a configurable listening/reading/both presentation mode with independent reading-only durations, supports Enter-to-end-early, and logs/synchronizes every phase transition.
+4. **Block 1** — done: validates the schedule (any row count, derived from the CSV rather than a fixed constant) and shared audio manifest, preloads all unique recordings, presents all five timed phases and three action types, supports a configurable listening/reading/both presentation mode with independent reading-only durations, supports Enter-to-end-early, and logs/synchronizes every phase transition.
 5. **Block 2** — done: 90-image manifest/sequence (200 trials), texture preload, one-back responses (hit/miss/false-alarm/correct-rejection), configurable on-screen image size, and timing/logging.
 6. **Block 3** — done: story manifests, audio preload/playback via PsychPortAudio, multiple-choice UI with pick/deselect/submit, scoring against answer keys, and logging.
 7. **Block 4** — done: runner, navigation (including pick/deselect/submit), validation, logging, and scoring are implemented, and `task_data/surveys/vviq.json` now holds the full 16-item VVIQ (4 scenarios × 4 items, transcribed from the reference PDF) with the standard Marks (1973) 1–5 vividness scale and documented sum-based scoring (16–80, higher = more vivid).
