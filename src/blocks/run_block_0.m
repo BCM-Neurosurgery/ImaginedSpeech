@@ -39,6 +39,11 @@ end
 [window, rect] = PsychImaging('OpenWindow', screenIndex, ...
     config.display.background_rgb(:)', windowRect);
 HideCursor(window);
+% Raise scheduling priority for the timed portion of the block so OS-level
+% preemption (background processes, the DWM compositor, etc.) is less likely
+% to delay a Flip past its target and cause a dropped/mistimed frame. Reset
+% to 0 happens in cleanup, which already assumed this was being done.
+Priority(MaxPriority(window));
 Screen('TextFont', window, config.display.font_name);
 
 screenWidth = RectWidth(rect);
@@ -106,7 +111,9 @@ end
 end
 
 function cleanupBlock0(oldSkipSyncTests)
-% Cleanup must also succeed after a partial initialization failure.
+% Cleanup must also succeed after a partial initialization failure. Each call
+% is isolated in its own try/catch so one failing step (e.g. a stale window
+% handle) cannot skip the rest of teardown or crash instead of unwinding.
 try
     KbQueueStop;
 catch
@@ -115,8 +122,20 @@ try
     KbQueueRelease;
 catch
 end
-ShowCursor;
-Priority(0);
-Screen('CloseAll');
-Screen('Preference', 'SkipSyncTests', oldSkipSyncTests);
+try
+    ShowCursor;
+catch
+end
+try
+    Priority(0);
+catch
+end
+try
+    Screen('CloseAll');
+catch
+end
+try
+    Screen('Preference', 'SkipSyncTests', oldSkipSyncTests);
+catch
+end
 end

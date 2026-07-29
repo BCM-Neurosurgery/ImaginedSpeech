@@ -24,14 +24,19 @@ blockRunners = {@run_block_0, @run_block_1, @run_block_2, ...
     @run_block_3, @run_block_4};
 lifecycle = start_task_lifecycle(config, blockNumber);
 config.cbmex.lifecycle = lifecycle;
+fprintf('[lifecycle] Block %d starting (task_id=%s)\n', blockNumber, lifecycle.task_id);
 try
     blockRunners{blockNumber + 1}(config);
+    fprintf('[lifecycle] Block %d runner returned normally; sending TASKSTOP\n', blockNumber);
     finish_task_lifecycle(lifecycle, 'stop');
 catch taskError
     if strcmp(taskError.identifier, 'ImaginedSpeech:TaskKilled')
+        fprintf('[lifecycle] Block %d ended early by Escape; sending TASKKILL\n', blockNumber);
         finish_task_lifecycle(lifecycle, 'kill');
         fprintf('Imagined Speech Block %d ended early by Escape.\n', blockNumber);
     else
+        fprintf('[lifecycle] Block %d raised an error (%s); sending TASKERR\n', ...
+            blockNumber, taskError.identifier);
         finish_task_lifecycle(lifecycle, 'error');
         rethrow(taskError);
     end

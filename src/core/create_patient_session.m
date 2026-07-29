@@ -10,7 +10,11 @@ if ~isfolder(saveRoot)
     [ok, message] = mkdir(saveRoot);
     if ~ok, error('ImaginedSpeech:CreateSaveRootFailed', '%s', message); end
 end
-patientDir = fullfile(saveRoot, patientId);
+% Nest every session under an ImaginedSpeech subfolder within the patient's
+% directory (rather than directly in it), since PatientData is shared across
+% multiple tasks and this keeps this task's output distinguishable from the
+% others' at a glance instead of all dumping timestamp folders side by side.
+patientDir = fullfile(saveRoot, patientId, 'ImaginedSpeech');
 if ~isfolder(patientDir)
     [ok, message] = mkdir(patientDir);
     if ~ok, error('ImaginedSpeech:CreatePatientDirFailed', '%s', message); end

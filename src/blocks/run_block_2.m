@@ -1,98 +1,188 @@
 function run_block_2(config)
-%RUN_BLOCK_2 Run randomized speech and imagery trials.
+%RUN_BLOCK_2 Run the image one-back encoding task.
 
-block=load_block2_content(config.block2.content_file);
-if ~isfield(config,'session')||~isfolder(config.session.directory),error('ImaginedSpeech:MissingSession','Block 2 requires an initialized patient session.');end
-oldSkip=Screen('Preference','SkipSyncTests',double(config.display.skip_sync_tests)); screenCleanup=onCleanup(@()cleanupScreen2(oldSkip));
-KbName('UnifyKeyNames'); keys.enter=KbName('Return'); keys.escape=KbName(config.keys.abort); allowed=zeros(1,256);allowed([keys.enter keys.escape])=1;KbQueueCreate([],allowed);KbQueueStart;queueCleanup=onCleanup(@cleanupQueue2);
-screens=Screen('Screens');if config.display.screen_index<0,screenIndex=max(screens);else,screenIndex=config.display.screen_index;end
-windowRect=[];if config.display.debug_windowed,windowRect=config.display.debug_window_rect(:)';end
-[window,rect]=PsychImaging('OpenWindow',screenIndex,config.display.background_rgb(:)',windowRect);HideCursor(window);Screen('TextFont',window,config.display.font_name);ifi=Screen('GetFlipInterval',window);
-diodeRect=[config.photodiode.margin_px,RectHeight(rect)-config.photodiode.margin_px-config.photodiode.size_px(2),config.photodiode.margin_px+config.photodiode.size_px(1),RectHeight(rect)-config.photodiode.margin_px];
-mode=string(config.block2.presentation_mode);showText=mode~="listening";playAudio=mode~="reading";
-if playAudio
-    InitializePsychSound(1);audioHandle=PsychPortAudio('Open',[],1,1,block.audio(1).sample_rate,2);
-else
-    audioHandle=-1;
+block = load_block2_content(config.block2.content_file);
+if ~isfield(config, 'session') || ~isfolder(config.session.directory)
+    error('ImaginedSpeech:MissingSession', 'Block 2 requires an initialized patient session.');
 end
-audioCleanup=onCleanup(@()cleanupAudio2(audioHandle));
+oldSkip = Screen('Preference', 'SkipSyncTests', double(config.display.skip_sync_tests));
+screenCleanup = onCleanup(@() cleanupScreen(oldSkip));
 
-toneState=init_sync_tones(config);toneCleanup=onCleanup(@()finish_sync_tones(toneState));
+KbName('UnifyKeyNames');
+keys.enter = KbName('Return'); keys.escape = KbName(config.keys.abort);
+allowed = zeros(1, 256); allowed([keys.enter keys.escape]) = 1;
+KbQueueCreate([], allowed); KbQueueStart;
+queueCleanup = onCleanup(@cleanupQueue);
 
-runId=char(datetime('now','Format','yyyyMMdd_HHmmss_SSS'));eventFile=fopen(fullfile(config.session.directory,['block2_' runId '_events.csv']),'w');trialFile=fopen(fullfile(config.session.directory,['block2_' runId '_trials.csv']),'w');
-if eventFile<0||trialFile<0,error('ImaginedSpeech:OutputOpenFailed','Cannot create Block 2 logs.');end
-fileCleanup=onCleanup(@()cleanupFiles2(eventFile,trialFile));
-fprintf(eventFile,'timestamp,event,trial,stimulus_id,stimulus_text,trial_type,early_end,action_duration\n');
-fprintf(trialFile,['trial,stimulus_id,stimulus_text,trial_type,is_phrase,stimulus_onset,silence_onset,' ...
-    'reveal_onset,cue_onset,iti_onset,ended_early,action_duration,silence_duration,iti_duration\n']);
+screens = Screen('Screens');
+if config.display.screen_index < 0, screenIndex = max(screens); else, screenIndex = config.display.screen_index; end
+windowRect = [];
+if config.display.debug_windowed, windowRect = config.display.debug_window_rect(:)'; end
+[window, rect] = PsychImaging('OpenWindow', screenIndex, config.display.background_rgb(:)', windowRect);
+% Raise scheduling priority for the timed portion of the block so OS-level
+% preemption (background processes, the DWM compositor, etc.) is less likely
+% to delay a Flip past its target and cause a dropped/mistimed frame. Reset
+% to 0 happens in cleanup, which already assumed this was being done.
+HideCursor(window); Priority(MaxPriority(window)); Screen('TextFont', window, config.display.font_name);
+ifi = Screen('GetFlipInterval', window);
+diodeRect = makeDiodeRect2(rect, config.photodiode);
+% Hold each sync flash on for flash_frames refresh cycles (not just one) so a
+% single dropped/jittered frame can't make the pulse too brief for the
+% photodiode/DAQ to reliably register.
+flashOff = (config.photodiode.flash_frames - 0.5) * ifi;
 
-sources=struct('label',{'block2_manifest','schedule','audio_manifest'}, ...
-    'path',{config.block2.content_file,block.schedule_path,block.audio_manifest_path});
-save_run_snapshot(config,2,runId,sources);
+textures = zeros(numel(block.images), 1);
+for index = 1:numel(block.images)
+    textures(index) = Screen('MakeTexture', window, block.images(index).pixels);
+end
+textureCleanup = onCleanup(@() cleanupTextures(textures));
 
-drawReady2(window,rect,block,config,diodeRect);Screen('Flip',window);
-if ~waitReady2(keys,config.block2.test_max_trials),task_killed;end
-KbReleaseWait;KbQueueFlush;
-play_sync_tone(toneState,'block_start');
-trialCount=height(block.schedule);if config.block2.test_max_trials>0,trialCount=min(trialCount,config.block2.test_max_trials);end
-scale=config.block2.test_timing_scale;
-for trial=1:trialCount
-    row=block.schedule(trial,:);audio=block.audio(row.audio_index);
-    silenceDuration=config.block2.default_silence_seconds;if config.block2.use_schedule_silence,silenceDuration=row.silent_period_duration;end
-    itiDuration=config.block2.default_iti_seconds;if config.block2.use_schedule_iti,itiDuration=row.inter_trial_interval_duration;end
-    silenceDuration=silenceDuration*scale;itiDuration=itiDuration*scale;revealDuration=config.block2.reveal_seconds*scale;
-    if row.is_phrase,maxAction=config.block2.phrase_action_seconds;else,maxAction=config.block2.word_action_seconds;end,maxAction=maxAction*scale;
-    if row.is_phrase,readingSeconds=config.block2.reading_only_phrase_seconds;else,readingSeconds=config.block2.reading_only_word_seconds;end,readingSeconds=readingSeconds*scale;
+toneState = init_sync_tones(config);
+toneCleanup = onCleanup(@() finish_sync_tones(toneState));
 
-    if showText,drawText2(window,rect,row.word,config.block2.stimulus_text_size,config,diodeRect,true);
-    else,drawBlank2(window,config,diodeRect,true);end
-    target=GetSecs+2*ifi;
-    if playAudio,PsychPortAudio('FillBuffer',audioHandle,audio.samples);PsychPortAudio('Start',audioHandle,1,target,0);end
-    stimOnset=Screen('Flip',window,target);
-    if playAudio,emit2(eventFile,config,stimOnset,'AUDIO_ONSET',trial,row,NaN,NaN);
-    else,play_sync_tone(toneState,'block2_reading_stimulus_onset');emit2(eventFile,config,stimOnset,'STIMULUS_ONSET',trial,row,NaN,NaN);end
-    if showText,drawText2(window,rect,row.word,config.block2.stimulus_text_size,config,diodeRect,false);
-    else,drawBlank2(window,config,diodeRect,false);end
-    Screen('Flip',window,stimOnset+.5*ifi);
-    if playAudio
-        if ~waitAudio2(audioHandle,keys.escape,config.block2.test_audio_max_seconds),PsychPortAudio('Stop',audioHandle,0);task_killed;end
-    else
-        if ~waitUntil2(stimOnset+readingSeconds,keys.escape),task_killed;end
+runId = char(datetime('now', 'Format', 'yyyyMMdd_HHmmss_SSS'));
+eventFile = fopen(fullfile(config.session.directory, ['block2_' runId '_events.csv']), 'w');
+responseFile = fopen(fullfile(config.session.directory, ['block2_' runId '_responses.csv']), 'w');
+if eventFile < 0 || responseFile < 0, error('ImaginedSpeech:OutputOpenFailed', 'Cannot create Block 2 logs.'); end
+fileCleanup = onCleanup(@() cleanupFiles(eventFile, responseFile));
+fprintf(eventFile, 'event_timestamp,event,trial,image_name,key_timestamp\n');
+fprintf(responseFile, ['trial,image_name,image_type,schedule_repeat_flag,is_target,' ...
+    'responded,response_time,reaction_time,outcome,image_onset\n']);
+
+sources = struct('label', {'block2_manifest', 'schedule'}, ...
+    'path', {config.block2.content_file, block.schedule_path});
+save_run_snapshot(config, 2, runId, sources);
+
+drawReady2(window, rect, block, config, diodeRect, false); Screen('Flip', window);
+if ~waitReady2(keys, config.block2.test_response_trials), task_killed; end
+KbReleaseWait; KbQueueFlush;
+play_sync_tone(toneState, 'block_start');
+
+trialCount = height(block.schedule);
+if config.block2.test_max_trials > 0, trialCount = min(trialCount, config.block2.test_max_trials); end
+nextOnset = GetSecs + 2 * ifi;
+for trial = 1:trialCount
+    row = block.schedule(trial, :);
+    texture = textures(row.image_index);
+    destination = fitTextureRect(Screen('Rect', texture), rect, config.block2.image_display_fraction);
+    drawImage2(window, texture, destination, config, diodeRect, true);
+    onset = Screen('Flip', window, nextOnset);
+    play_sync_tone(toneState, 'block2_image_onset');
+    emit2(eventFile, config, onset, 'IMAGE_ONSET', trial, row.image_name, NaN);
+    drawImage2(window, texture, destination, config, diodeRect, false);
+    Screen('Flip', window, onset + flashOff);
+    KbQueueFlush;
+
+    responded = false; responseTime = NaN;
+    imageOffset = onset + config.block2.image_on_seconds;
+    trialEnd = imageOffset + config.block2.image_off_seconds;
+    autoRespond = ismember(trial, config.block2.test_response_trials);
+    [responded, responseTime, aborted, respFlashEnd] = collectPhase(window, texture, destination, ...
+        true, imageOffset, responded, responseTime, autoRespond, onset, keys, ...
+        config, diodeRect, eventFile, trial, row.image_name, ifi, toneState);
+    if aborted, task_killed; end
+    % No flash/comment on the image-off transition itself -- only IMAGE_ONSET
+    % and RESPONSE are marked. A RESPONSE flash landing near imageOffset was
+    % otherwise liable to sit right next to this transition's own flash and
+    % blend into it on the photodiode, which is what made proccing inconsistent.
+    Screen('FillRect', window, config.display.background_rgb(:)');
+    drawDiode2(window, config, diodeRect, false); Screen('Flip', window, imageOffset);
+    [responded, responseTime, aborted, respFlashEnd2] = collectPhase(window, texture, destination, ...
+        false, trialEnd, responded, responseTime, autoRespond, onset, keys, ...
+        config, diodeRect, eventFile, trial, row.image_name, ifi, toneState);
+    if aborted, task_killed; end
+    if ~isnan(respFlashEnd2), respFlashEnd = respFlashEnd2; end
+
+    if row.is_target && responded, outcome = 'hit';
+    elseif row.is_target, outcome = 'miss';
+    elseif responded, outcome = 'false_alarm';
+    else, outcome = 'correct_rejection'; end
+    fprintf(responseFile, '%d,%s,%s,%s,%d,%d,%.9f,%.9f,%s,%.9f\n', ...
+        trial, csv2(row.image_name), csv2(row.image_type), csv2(row.repeated_consecutively), ...
+        row.is_target, responded, responseTime, responseTime - onset, outcome, onset);
+    % A RESPONSE flash can land anywhere up to trialEnd (participants often
+    % react after the image itself has already gone off-screen). If one
+    % happened right before trialEnd, pushing the next trial's IMAGE_ONSET
+    % flash out until that RESPONSE flash has fully finished prevents the two
+    % flashes from landing close enough together to blend on the photodiode.
+    nextOnset = trialEnd;
+    if ~isnan(respFlashEnd), nextOnset = max(nextOnset, respFlashEnd + flashOff); end
+end
+% textureCleanup (registered above, right after the textures were created)
+% already closes these textures exactly once on every exit path via onCleanup's
+% LIFO ordering -- it fires before screenCleanup regardless of whether this
+% function returns normally, is ended early by Escape, or errors. Do not also
+% close them here: Screen('Close') on an already-closed texture handle is a
+% double-free that can crash MATLAB outright rather than raising a catchable error.
+end
+
+function [responded, responseTime, aborted, flashEnd] = collectPhase(window, texture, destination, imageVisible, deadline, responded, responseTime, autoRespond, onset, keys, config, diodeRect, eventFile, trial, imageName, ifi, toneState)
+aborted = false;
+flashEnd = NaN; % actual completion time of this call's RESPONSE flash, if any; NaN if no response occurred here
+while GetSecs < deadline
+    [pressed, first] = KbQueueCheck;
+    if pressed && first(keys.escape) > 0, aborted = true; return; end
+    simulated = autoRespond && ~responded && GetSecs >= onset + 0.05;
+    actual = pressed && first(keys.enter) > 0;
+    if ~responded && (actual || simulated)
+        if actual, responseTime = first(keys.enter); else, responseTime = GetSecs; end
+        responded = true;
+        play_sync_tone(toneState, 'block2_response');
+        if imageVisible, drawImage2(window, texture, destination, config, diodeRect, true);
+        else, Screen('FillRect', window, config.display.background_rgb(:)'); drawDiode2(window, config, diodeRect, true); end
+        flashTime = Screen('Flip', window);
+        emit2(eventFile, config, flashTime, 'RESPONSE', trial, imageName, responseTime);
+        if imageVisible, drawImage2(window, texture, destination, config, diodeRect, false);
+        else, Screen('FillRect', window, config.display.background_rgb(:)'); drawDiode2(window, config, diodeRect, false); end
+        flashEnd = Screen('Flip', window, flashTime + (config.photodiode.flash_frames - 0.5) * ifi); KbQueueFlush;
     end
-
-    drawBlank2(window,config,diodeRect,true);silenceOnset=Screen('Flip',window);emit2(eventFile,config,silenceOnset,'SILENCE_ONSET',trial,row,NaN,NaN);
-    drawBlank2(window,config,diodeRect,false);Screen('Flip',window,silenceOnset+.5*ifi);if ~waitUntil2(silenceOnset+silenceDuration,keys.escape),task_killed;end
-
-    actionLabel=getActionLabel2(block.action_labels,row.trial_type);
-    drawText2(window,rect,actionLabel,config.block2.action_text_size,config,diodeRect,true);revealOnset=Screen('Flip',window);emit2(eventFile,config,revealOnset,'TRIAL_TYPE_REVEAL',trial,row,NaN,NaN);
-    drawText2(window,rect,actionLabel,config.block2.action_text_size,config,diodeRect,false);Screen('Flip',window,revealOnset+.5*ifi);if ~waitUntil2(revealOnset+revealDuration,keys.escape),task_killed;end
-
-    KbQueueFlush;drawCue2(window,rect,config,diodeRect,true);cueOnset=Screen('Flip',window);emit2(eventFile,config,cueOnset,'ACTION_CUE_ONSET',trial,row,NaN,NaN);
-    drawCue2(window,rect,config,diodeRect,false);Screen('Flip',window,cueOnset+.5*ifi);
-    simulate=ismember(trial,config.block2.test_early_end_trials);[endedEarly,actionEnd,aborted]=waitAction2(cueOnset,maxAction,keys,simulate,toneState);if aborted,task_killed;end
-    actionDuration=actionEnd-cueOnset;
-
-    drawBlank2(window,config,diodeRect,true);itiOnset=Screen('Flip',window);emit2(eventFile,config,itiOnset,'ITI_ONSET',trial,row,endedEarly,actionDuration);
-    drawBlank2(window,config,diodeRect,false);Screen('Flip',window,itiOnset+.5*ifi);if ~waitUntil2(itiOnset+itiDuration,keys.escape),task_killed;end
-    fprintf(trialFile,'%d,%s,%s,%s,%d,%.9f,%.9f,%.9f,%.9f,%.9f,%d,%.9f,%.6f,%.6f\n',trial,csv2(row.stimulus_id),csv2(row.word),csv2(row.trial_type),row.is_phrase,stimOnset,silenceOnset,revealOnset,cueOnset,itiOnset,endedEarly,actionDuration,silenceDuration,itiDuration);
+    WaitSecs('YieldSecs', 0.002);
 end
 end
 
-function label=getActionLabel2(labels,trialType)
-switch char(trialType),case 'speaking',label=labels.speaking;case 'imagine speaking',label=labels.imagineSpeaking;case 'visually imagine',label=labels.visuallyImagine;otherwise,error('ImaginedSpeech:InvalidTrialType','Unknown trial type.');end
+function drawReady2(window, rect, block, config, diodeRect, on)
+Screen('FillRect', window, config.display.background_rgb(:)'); Screen('TextSize', window, 42);
+DrawFormattedText(window, block.ready_title, 'center', RectHeight(rect)*0.25, config.display.text_rgb(:)');
+Screen('TextSize', window, 28); DrawFormattedText(window, block.ready_text, 'center', RectHeight(rect)*0.45, config.display.text_rgb(:)', 60);
+DrawFormattedText(window, block.ready_prompt, 'center', RectHeight(rect)*0.75, config.display.text_rgb(:)');
+drawDiode2(window, config, diodeRect, on);
 end
-function drawReady2(w,r,b,c,d),Screen('FillRect',w,c.display.background_rgb(:)');Screen('TextSize',w,42);DrawFormattedText(w,b.ready_title,'center',RectHeight(r)*.2,c.display.text_rgb(:)',65);Screen('TextSize',w,27);DrawFormattedText(w,b.ready_text,'center',RectHeight(r)*.4,c.display.text_rgb(:)',75,[],[],1.25);DrawFormattedText(w,b.ready_prompt,'center',RectHeight(r)*.8,c.display.text_rgb(:)');drawDiode2(w,c,d,false);end
-function drawText2(w,r,textValue,sizeValue,c,d,on),Screen('FillRect',w,c.display.background_rgb(:)');Screen('TextSize',w,sizeValue);DrawFormattedText(w,char(textValue),'center','center',c.display.text_rgb(:)',70);drawDiode2(w,c,d,on);end
-function drawCue2(w,r,c,d,on),Screen('FillRect',w,c.display.background_rgb(:)');s=c.block2.cue_square_size_px;box=CenterRectOnPointd([0 0 s s],RectWidth(r)/2,RectHeight(r)/2);Screen('FillRect',w,[0 255 0],box);drawDiode2(w,c,d,on);end
-function drawBlank2(w,c,d,on),Screen('FillRect',w,c.display.background_rgb(:)');drawDiode2(w,c,d,on);end
-function drawDiode2(w,c,d,on),if ~c.photodiode.enabled,return,end,if on,color=c.photodiode.on_rgb;else,color=c.photodiode.off_rgb;end,Screen('FillRect',w,color(:)',d);end
-function emit2(f,c,t,e,n,row,early,duration),comment=sprintf('B2_%s trial=%d text=%s type=%s',e,n,char(row.word),char(row.trial_type));if strcmp(e,'ITI_ONSET'),comment=sprintf('%s enter_early=%d action_s=%.3f',comment,early,duration);end,if strlength(comment)>127,error('ImaginedSpeech:CommentTooLong','Cbmex comment too long: %s',comment);end,send_task_event_comment(c,comment);fprintf(f,'%.9f,%s,%d,%s,%s,%s,%.0f,%.9f\n',t,e,n,row.stimulus_id,row.word,row.trial_type,early,duration);end
-function ok=waitReady2(k,testTrials),KbQueueFlush;ok=false;if testTrials>0,d=GetSecs+.1;else,d=Inf;end,while GetSecs<d,[p,x]=KbQueueCheck;if p&&x(k.escape)>0,return,end,if p&&x(k.enter)>0,ok=true;return,end,WaitSecs('YieldSecs',.005);end,ok=true;end
-function ok=waitAudio2(h,esc,maxSeconds),ok=true;start=GetSecs;KbQueueFlush;while true,status=PsychPortAudio('GetStatus',h);if ~status.Active,return,end,[p,x]=KbQueueCheck;if p&&x(esc)>0,ok=false;return,end,if maxSeconds>0&&GetSecs-start>=maxSeconds,PsychPortAudio('Stop',h,0);return,end,WaitSecs('YieldSecs',.005);end,end
-function ok=waitUntil2(deadline,esc),ok=true;KbQueueFlush;while GetSecs<deadline,[p,x]=KbQueueCheck;if p&&x(esc)>0,ok=false;return,end,WaitSecs('YieldSecs',.002);end,end
-function [early,t,aborted]=waitAction2(onset,maxDuration,k,simulate,toneState),early=false;aborted=false;deadline=onset+maxDuration;while GetSecs<deadline,[p,x]=KbQueueCheck;if p&&x(k.escape)>0,t=GetSecs;aborted=true;return,end,if p&&x(k.enter)>0,early=true;t=x(k.enter);play_sync_tone(toneState,'block2_early_response');return,end,if simulate&&GetSecs>=onset+min(.05,maxDuration/2),early=true;t=GetSecs;play_sync_tone(toneState,'block2_early_response');return,end,WaitSecs('YieldSecs',.002);end,t=deadline;end
-function v=csv2(v),v=['"' strrep(char(v),'"','""') '"'];end
-function cleanupAudio2(h),if h<0,return,end,try,PsychPortAudio('Stop',h,0);catch,end,try,PsychPortAudio('Close',h);catch,end,end
-function cleanupQueue2(),try,KbQueueStop;catch,end,try,KbQueueRelease;catch,end,end
-function cleanupFiles2(a,b),if a>=0,fclose(a);end,if b>=0,fclose(b);end,end
-function cleanupScreen2(o),ShowCursor;Priority(0);Screen('CloseAll');Screen('Preference','SkipSyncTests',o);end
+
+function drawImage2(window, texture, destination, config, diodeRect, on)
+Screen('FillRect', window, config.display.background_rgb(:)'); Screen('DrawTexture', window, texture, [], destination);
+drawDiode2(window, config, diodeRect, on);
+end
+
+function destination = fitTextureRect(source, target, fraction)
+scale = min(RectWidth(target)*fraction/RectWidth(source), RectHeight(target)*fraction/RectHeight(source));
+destination = CenterRectOnPointd([0 0 RectWidth(source)*scale RectHeight(source)*scale], RectWidth(target)/2, RectHeight(target)/2);
+end
+
+function rect = makeDiodeRect2(windowRect, diode)
+rect = [diode.margin_px, RectHeight(windowRect)-diode.margin_px-diode.size_px(2), diode.margin_px+diode.size_px(1), RectHeight(windowRect)-diode.margin_px];
+end
+function drawDiode2(window, config, rect, on)
+if ~config.photodiode.enabled, return; end
+if on, color=config.photodiode.on_rgb; else, color=config.photodiode.off_rgb; end
+Screen('FillRect', window, color(:)', rect);
+end
+function emit2(fileId, config, timestamp, eventName, trial, imageName, keyTime)
+comment = sprintf('B2_%s trial=%d image=%s', eventName, trial, imageName);
+if strlength(comment)>127, error('ImaginedSpeech:CommentTooLong','Cbmex comment too long.'); end
+send_task_event_comment(config,comment);
+fprintf(fileId,'%.9f,%s,%d,%s,%.9f\n',timestamp,eventName,trial,imageName,keyTime);
+end
+function proceed = waitReady2(keys, testResponses)
+KbQueueFlush; proceed=false; auto=~isempty(testResponses); if auto, deadline=GetSecs+0.1; else, deadline=Inf; end
+while GetSecs<deadline
+    [pressed,first]=KbQueueCheck; if pressed && first(keys.escape)>0, return; end
+    if pressed && first(keys.enter)>0, proceed=true; return; end
+    WaitSecs('YieldSecs',0.005);
+end
+proceed=true;
+end
+function value=csv2(value), value=['"' strrep(char(value),'"','""') '"']; end
+function cleanupQueue(), try, KbQueueStop; catch, end, try, KbQueueRelease; catch, end, end
+function cleanupTextures(textureHandles), try, Screen('Close', textureHandles); catch, end, end
+function cleanupFiles(a,b), if a>=0, fclose(a); end, if b>=0, fclose(b); end, end
+function cleanupScreen(oldSkip), try, ShowCursor; catch, end, try, Priority(0); catch, end, try, Screen('CloseAll'); catch, end, try, Screen('Preference','SkipSyncTests',oldSkip); catch, end, end

@@ -1,76 +1,62 @@
 function block = load_block3_content(contentPath)
-%LOAD_BLOCK3_CONTENT Validate schedule and preload all unique image pixels.
+%LOAD_BLOCK3_CONTENT Validate and preload all Block 3 content and audio.
 
 if ~isfile(contentPath)
-    error('ImaginedSpeech:MissingBlock3Content', 'Block 3 manifest not found: %s', contentPath);
+    error('ImaginedSpeech:MissingBlock3Content', 'Block 3 content not found: %s', contentPath);
 end
 block = jsondecode(fileread(contentPath));
-required = {'schema_version', 'block_id', 'schedule_file', ...
-    'ready_title', 'ready_text', 'ready_prompt'};
+required = {'schema_version', 'block_id', 'ready_prompt', 'listening_text', ...
+    'question_navigation_prompt', 'question_submit_prompt', 'stories'};
 for index = 1:numel(required)
     if ~isfield(block, required{index})
         error('ImaginedSpeech:InvalidBlock3Content', 'Missing field: %s', required{index});
     end
 end
-if block.schema_version ~= 1
-    error('ImaginedSpeech:InvalidBlock3Content', 'Unsupported Block 3 schema version.');
+if block.schema_version ~= 1 || numel(block.stories) ~= 2
+    error('ImaginedSpeech:InvalidBlock3Content', ...
+        'Block 3 requires schema version 1 and exactly two stories.');
 end
 
 baseDir = fileparts(contentPath);
-schedulePath = fullfile(baseDir, block.schedule_file);
-if ~isfile(schedulePath)
-    error('ImaginedSpeech:MissingImageSchedule', 'Image schedule not found: %s', schedulePath);
-end
-schedule = readtable(schedulePath, 'TextType', 'string');
-requiredColumns = ["image_name", "image_type", "repeated_consecutively"];
-if ~all(ismember(requiredColumns, string(schedule.Properties.VariableNames)))
-    error('ImaginedSpeech:InvalidImageSchedule', 'Image schedule columns are invalid.');
-end
-if isempty(schedule) || any(~ismember(schedule.repeated_consecutively, ["Yes", "No"]))
-    error('ImaginedSpeech:InvalidImageSchedule', 'Schedule is empty or has invalid repeat flags.');
-end
-
-allFiles = dir(fullfile(baseDir, '**', '*'));
-allFiles = allFiles(~[allFiles.isdir]);
-names = string({allFiles.name});
-if numel(unique(names)) ~= numel(names)
-    error('ImaginedSpeech:AmbiguousImageNames', 'Image filenames must be unique across subdirectories.');
-end
-
-uniqueNames = unique(schedule.image_name, 'stable');
-images = repmat(struct('name', '', 'path', '', 'pixels', []), numel(uniqueNames), 1);
-nameToIndex = containers.Map('KeyType', 'char', 'ValueType', 'double');
-for index = 1:numel(uniqueNames)
-    match = find(names == uniqueNames(index));
-    if numel(match) ~= 1
-        error('ImaginedSpeech:MissingImage', 'Expected one file named %s; found %d.', uniqueNames(index), numel(match));
+questionIds = strings(0);
+for storyIndex = 1:numel(block.stories)
+    story = block.stories(storyIndex);
+    audioPath = fullfile(baseDir, story.audio_file);
+    if ~isfile(audioPath)
+        error('ImaginedSpeech:MissingStoryAudio', 'Story audio not found: %s', audioPath);
     end
-    imagePath = fullfile(allFiles(match).folder, allFiles(match).name);
-    [pixels, map] = imread(imagePath);
-    if ~isempty(map), pixels = uint8(ind2rgb(pixels, map) * 255); end
-    if ismatrix(pixels), pixels = repmat(pixels, 1, 1, 3); end
-    images(index).name = char(uniqueNames(index));
-    images(index).path = imagePath;
-    images(index).pixels = pixels;
-    nameToIndex(char(uniqueNames(index))) = index;
-end
+    [samples, sampleRate] = audioread(audioPath);
+    if isempty(samples) || any(~isfinite(samples), 'all')
+        error('ImaginedSpeech:InvalidStoryAudio', 'Invalid samples in: %s', audioPath);
+    end
+    if size(samples, 2) == 1
+        samples = repmat(samples, 1, 2);
+    elseif size(samples, 2) ~= 2
+        error('ImaginedSpeech:InvalidStoryAudio', 'Audio must be mono or stereo: %s', audioPath);
+    end
+    block.stories(storyIndex).audio_samples = samples';
+    block.stories(storyIndex).sample_rate = sampleRate;
+    block.stories(storyIndex).audio_path = audioPath;
 
-schedule.image_index = zeros(height(schedule), 1);
-schedule.is_target = false(height(schedule), 1);
-for trial = 1:height(schedule)
-    schedule.image_index(trial) = nameToIndex(char(schedule.image_name(trial)));
-    if trial > 1
-        schedule.is_target(trial) = schedule.image_name(trial) == schedule.image_name(trial - 1);
+    for questionIndex = 1:numel(story.questions)
+        question = story.questions(questionIndex);
+        if numel(question.choices) < 2
+            error('ImaginedSpeech:InvalidBlock3Content', ...
+                'Question %s must have at least two choices.', question.id);
+        end
+        choiceIds = string({question.choices.id});
+        if numel(unique(choiceIds)) ~= numel(choiceIds) || ...
+                ~ismember(string(question.correct_choice_id), choiceIds)
+            error('ImaginedSpeech:InvalidBlock3Content', ...
+                'Question %s has invalid choice IDs or answer key.', question.id);
+        end
+        questionIds(end + 1) = string(question.id); %#ok<AGROW>
     end
 end
-
-% The supplied flag marks both members of a repeated pair. Verify that every
-% computed one-back target is marked without misclassifying the pair's first image.
-if any(schedule.is_target & schedule.repeated_consecutively ~= "Yes")
-    error('ImaginedSpeech:InvalidImageSchedule', ...
-        'A computed consecutive repeat is not marked Yes in the supplied schedule.');
+if numel(unique(questionIds)) ~= numel(questionIds)
+    error('ImaginedSpeech:InvalidBlock3Content', 'Question IDs must be unique.');
 end
-block.schedule = schedule;
-block.images = images;
-block.schedule_path = schedulePath;
+if numel(unique([block.stories.sample_rate])) ~= 1
+    error('ImaginedSpeech:InvalidStoryAudio', 'All stories must use one sample rate.');
+end
 end

@@ -1,166 +1,336 @@
 function run_block_3(config)
-%RUN_BLOCK_3 Run the image one-back encoding task.
+%RUN_BLOCK_3 Present two stories followed by comprehension questions.
 
-block = load_block3_content(config.block3.content_file);
-if ~isfield(config, 'session') || ~isfolder(config.session.directory)
-    error('ImaginedSpeech:MissingSession', 'Block 3 requires an initialized patient session.');
-end
+content = load_block3_content(config.block3.content_file);
 oldSkip = Screen('Preference', 'SkipSyncTests', double(config.display.skip_sync_tests));
-screenCleanup = onCleanup(@() cleanupScreen(oldSkip));
+state = struct('audio', [], 'eventFile', -1, ...
+    'responseFile', -1);
+screenCleanup = onCleanup(@() cleanupBlock3Screen(oldSkip));
 
 KbName('UnifyKeyNames');
-keys.enter = KbName('Return'); keys.escape = KbName(config.keys.abort);
-allowed = zeros(1, 256); allowed([keys.enter keys.escape]) = 1;
-KbQueueCreate([], allowed); KbQueueStart;
-queueCleanup = onCleanup(@cleanupQueue);
+keys.enter = KbName('Return');
+keys.up = KbName('UpArrow');
+keys.down = KbName('DownArrow');
+keys.escape = KbName(config.keys.abort);
+keys.deselect = KbName(config.keys.deselect);
+allowed = zeros(1, 256);
+allowed([keys.enter, keys.up, keys.down, keys.escape, keys.deselect]) = 1;
+KbQueueCreate([], allowed);
+KbQueueStart;
+queueCleanup = onCleanup(@cleanupBlock3Queue);
 
 screens = Screen('Screens');
-if config.display.screen_index < 0, screenIndex = max(screens); else, screenIndex = config.display.screen_index; end
-windowRect = [];
-if config.display.debug_windowed, windowRect = config.display.debug_window_rect(:)'; end
-[window, rect] = PsychImaging('OpenWindow', screenIndex, config.display.background_rgb(:)', windowRect);
-HideCursor(window); Screen('TextFont', window, config.display.font_name);
-ifi = Screen('GetFlipInterval', window);
-diodeRect = makeDiodeRect3(rect, config.photodiode);
-
-textures = zeros(numel(block.images), 1);
-for index = 1:numel(block.images)
-    textures(index) = Screen('MakeTexture', window, block.images(index).pixels);
+if config.display.screen_index < 0
+    screenIndex = max(screens);
+else
+    screenIndex = config.display.screen_index;
 end
-textureCleanup = onCleanup(@() cleanupTextures(textures));
+windowRect = [];
+if config.display.debug_windowed
+    windowRect = config.display.debug_window_rect(:)';
+end
+[window, rect] = PsychImaging('OpenWindow', screenIndex, ...
+    config.display.background_rgb(:)', windowRect);
+HideCursor(window);
+% Raise scheduling priority for the timed portion of the block so OS-level
+% preemption (background processes, the DWM compositor, etc.) is less likely
+% to delay a Flip past its target and cause a dropped/mistimed frame. Reset
+% to 0 happens in cleanup, which already assumed this was being done.
+Priority(MaxPriority(window));
+Screen('TextFont', window, config.display.font_name);
+ifi = Screen('GetFlipInterval', window);
+diodeRect = makeDiodeRect(rect, config.photodiode);
+% Hold each sync flash on for flash_frames refresh cycles (not just one) so a
+% single dropped/jittered frame can't make the pulse too brief for the
+% photodiode/DAQ to reliably register.
+flashOff = (config.photodiode.flash_frames - 0.5) * ifi;
+
+InitializePsychSound(1);
+sampleRate = content.stories(1).sample_rate;
+state.audio = PsychPortAudio('Open', [], 1, 1, sampleRate, 2);
+audioCleanup = onCleanup(@() cleanupBlock3Audio(state.audio));
 
 toneState = init_sync_tones(config);
 toneCleanup = onCleanup(@() finish_sync_tones(toneState));
 
+if ~isfield(config, 'session') || ~isfolder(config.session.directory)
+    error('ImaginedSpeech:MissingSession', 'Block 3 requires an initialized patient session.');
+end
 runId = char(datetime('now', 'Format', 'yyyyMMdd_HHmmss_SSS'));
-eventFile = fopen(fullfile(config.session.directory, ['block3_' runId '_events.csv']), 'w');
-responseFile = fopen(fullfile(config.session.directory, ['block3_' runId '_responses.csv']), 'w');
-if eventFile < 0 || responseFile < 0, error('ImaginedSpeech:OutputOpenFailed', 'Cannot create Block 3 logs.'); end
-fileCleanup = onCleanup(@() cleanupFiles(eventFile, responseFile));
-fprintf(eventFile, 'event_timestamp,event,trial,image_name,key_timestamp\n');
-fprintf(responseFile, ['trial,image_name,image_type,schedule_repeat_flag,is_target,' ...
-    'responded,response_time,reaction_time,outcome,image_onset\n']);
+state.eventFile = fopen(fullfile(config.session.directory, ...
+    ['block3_' runId '_events.csv']), 'w');
+state.responseFile = fopen(fullfile(config.session.directory, ...
+    ['block3_' runId '_responses.csv']), 'w');
+if state.eventFile < 0 || state.responseFile < 0
+    error('ImaginedSpeech:OutputOpenFailed', 'Could not create Block 3 output files.');
+end
+fileCleanup = onCleanup(@() cleanupBlock3Files( ...
+    state.eventFile, state.responseFile));
+fprintf(state.eventFile, 'timestamp,event,story_id,question_id,choice_id\n');
+fprintf(state.responseFile, ['story_id,question_id,choice_id,choice_text,' ...
+    'correct_choice_id,is_correct,question_onset,pick_time,submit_time\n']);
 
-sources = struct('label', {'block3_manifest', 'schedule'}, ...
-    'path', {config.block3.content_file, block.schedule_path});
+sources = struct('label', {'block3_manifest'}, 'path', {config.block3.content_file});
+for storySourceIndex = 1:numel(content.stories)
+    sources(end + 1) = struct('label', ['story_audio_' char(content.stories(storySourceIndex).id)], ...
+        'path', content.stories(storySourceIndex).audio_path); %#ok<AGROW>
+end
 save_run_snapshot(config, 3, runId, sources);
 
-drawReady3(window, rect, block, config, diodeRect, false); Screen('Flip', window);
-if ~waitReady3(keys, config.block3.test_response_trials), task_killed; end
-KbReleaseWait; KbQueueFlush;
 play_sync_tone(toneState, 'block_start');
-
-trialCount = height(block.schedule);
-if config.block3.test_max_trials > 0, trialCount = min(trialCount, config.block3.test_max_trials); end
-nextOnset = GetSecs + 2 * ifi;
-for trial = 1:trialCount
-    row = block.schedule(trial, :);
-    texture = textures(row.image_index);
-    destination = fitTextureRect(Screen('Rect', texture), rect, config.block3.image_display_fraction);
-    drawImage3(window, texture, destination, config, diodeRect, true);
-    onset = Screen('Flip', window, nextOnset);
-    play_sync_tone(toneState, 'block3_image_onset');
-    emit3(eventFile, config, onset, 'IMAGE_ONSET', trial, row.image_name, NaN);
-    drawImage3(window, texture, destination, config, diodeRect, false);
-    Screen('Flip', window, onset + 0.5 * ifi);
-    KbQueueFlush;
-
-    responded = false; responseTime = NaN;
-    imageOffset = onset + config.block3.image_on_seconds;
-    trialEnd = imageOffset + config.block3.image_off_seconds;
-    autoRespond = ismember(trial, config.block3.test_response_trials);
-    [responded, responseTime, aborted] = collectPhase(window, texture, destination, ...
-        true, imageOffset, responded, responseTime, autoRespond, onset, keys, ...
-        config, diodeRect, eventFile, trial, row.image_name, ifi, toneState);
-    if aborted, task_killed; end
-    Screen('FillRect', window, config.display.background_rgb(:)');
-    drawDiode3(window, config, diodeRect, false); Screen('Flip', window, imageOffset);
-    [responded, responseTime, aborted] = collectPhase(window, texture, destination, ...
-        false, trialEnd, responded, responseTime, autoRespond, onset, keys, ...
-        config, diodeRect, eventFile, trial, row.image_name, ifi, toneState);
-    if aborted, task_killed; end
-
-    if row.is_target && responded, outcome = 'hit';
-    elseif row.is_target, outcome = 'miss';
-    elseif responded, outcome = 'false_alarm';
-    else, outcome = 'correct_rejection'; end
-    fprintf(responseFile, '%d,%s,%s,%s,%d,%d,%.9f,%.9f,%s,%.9f\n', ...
-        trial, csv3(row.image_name), csv3(row.image_type), csv3(row.repeated_consecutively), ...
-        row.is_target, responded, responseTime, responseTime - onset, outcome, onset);
-    nextOnset = trialEnd;
-end
-% Release the precreated textures before the onscreen window's cleanup runs.
-% The cleanup guard remains in place for errors and participant aborts.
-Screen('Close', textures);
-textures(:) = 0;
-end
-
-function [responded, responseTime, aborted] = collectPhase(window, texture, destination, imageVisible, deadline, responded, responseTime, autoRespond, onset, keys, config, diodeRect, eventFile, trial, imageName, ifi, toneState)
-aborted = false;
-while GetSecs < deadline
-    [pressed, first] = KbQueueCheck;
-    if pressed && first(keys.escape) > 0, aborted = true; return; end
-    simulated = autoRespond && ~responded && GetSecs >= onset + 0.05;
-    actual = pressed && first(keys.enter) > 0;
-    if ~responded && (actual || simulated)
-        if actual, responseTime = first(keys.enter); else, responseTime = GetSecs; end
-        responded = true;
-        play_sync_tone(toneState, 'block3_response');
-        if imageVisible, drawImage3(window, texture, destination, config, diodeRect, true);
-        else, Screen('FillRect', window, config.display.background_rgb(:)'); drawDiode3(window, config, diodeRect, true); end
-        flashTime = Screen('Flip', window);
-        emit3(eventFile, config, flashTime, 'RESPONSE', trial, imageName, responseTime);
-        if imageVisible, drawImage3(window, texture, destination, config, diodeRect, false);
-        else, Screen('FillRect', window, config.display.background_rgb(:)'); drawDiode3(window, config, diodeRect, false); end
-        Screen('Flip', window, flashTime + 0.5 * ifi); KbQueueFlush;
+for storyIndex = 1:numel(content.stories)
+    story = content.stories(storyIndex);
+    PsychPortAudio('FillBuffer', state.audio, story.audio_samples);
+    drawReady(window, rect, story.title, content.ready_prompt, config, diodeRect, false);
+    Screen('Flip', window);
+    if ~waitForEnter(keys, config.block3.test_auto_advance_seconds)
+        task_killed;
     end
-    WaitSecs('YieldSecs', 0.002);
+
+    drawListening(window, rect, content.listening_text, config, diodeRect, true);
+    targetTime = GetSecs + 2 * ifi;
+    PsychPortAudio('Start', state.audio, 1, targetTime, 0);
+    onset = Screen('Flip', window, targetTime);
+    emitAfterPhotodiode(state, config, onset, 'STORY_START', story.id, '', '');
+    drawListening(window, rect, content.listening_text, config, diodeRect, false);
+    Screen('Flip', window, onset + flashOff);
+    if ~waitForStory(state.audio, keys.escape, config.block3.test_max_story_seconds)
+        PsychPortAudio('Stop', state.audio, 0);
+        task_killed;
+    end
+
+    for questionIndex = 1:numel(story.questions)
+        question = story.questions(questionIndex);
+        highlight = 1;
+        selected = 0;
+        drawQuestion(window, rect, question, highlight, selected, content, ...
+            config, diodeRect, true);
+        questionOnset = Screen('Flip', window);
+        play_sync_tone(toneState, 'block3_question_onset');
+        emitAfterPhotodiode(state, config, questionOnset, 'QUESTION_SHOW', ...
+            story.id, question.id, '');
+        drawQuestion(window, rect, question, highlight, selected, content, ...
+            config, diodeRect, false);
+        Screen('Flip', window, questionOnset + flashOff);
+        KbQueueFlush;
+
+        pickTime = NaN;
+        while true
+            autoDelay = config.block3.test_auto_advance_seconds;
+            [action, actionTime] = waitForQuestionAction(keys, autoDelay);
+            if action == "abort"
+                task_killed;
+            elseif action == "up" && selected == 0
+                highlight = mod(highlight - 2, numel(question.choices)) + 1;
+                drawQuestion(window, rect, question, highlight, selected, content, ...
+                    config, diodeRect, true);
+                flipTime = Screen('Flip', window);
+                emitAfterPhotodiode(state, config, flipTime, 'HIGHLIGHT_MOVE', ...
+                    story.id, question.id, sprintf('up:%d', highlight));
+                drawQuestion(window, rect, question, highlight, selected, content, ...
+                    config, diodeRect, false);
+                Screen('Flip', window, flipTime + flashOff);
+                KbQueueFlush;
+                continue;
+            elseif action == "down" && selected == 0
+                highlight = mod(highlight, numel(question.choices)) + 1;
+                drawQuestion(window, rect, question, highlight, selected, content, ...
+                    config, diodeRect, true);
+                flipTime = Screen('Flip', window);
+                emitAfterPhotodiode(state, config, flipTime, 'HIGHLIGHT_MOVE', ...
+                    story.id, question.id, sprintf('down:%d', highlight));
+                drawQuestion(window, rect, question, highlight, selected, content, ...
+                    config, diodeRect, false);
+                Screen('Flip', window, flipTime + flashOff);
+                KbQueueFlush;
+                continue;
+            elseif action == "enter" && selected == 0
+                selected = highlight;
+                pickTime = actionTime;
+                choice = question.choices(selected);
+                drawQuestion(window, rect, question, highlight, selected, content, ...
+                    config, diodeRect, true);
+                flipTime = Screen('Flip', window);
+                emitAfterPhotodiode(state, config, flipTime, 'ANSWER_PICK', ...
+                    story.id, question.id, choice.id);
+                drawQuestion(window, rect, question, highlight, selected, content, ...
+                    config, diodeRect, false);
+                Screen('Flip', window, flipTime + flashOff);
+                KbQueueFlush;
+                continue;
+            elseif action == "deselect" && selected > 0
+                previousChoice = question.choices(selected);
+                selected = 0;
+                pickTime = NaN;
+                drawQuestion(window, rect, question, highlight, selected, content, ...
+                    config, diodeRect, true);
+                flipTime = Screen('Flip', window);
+                emitAfterPhotodiode(state, config, flipTime, 'ANSWER_DESELECT', ...
+                    story.id, question.id, previousChoice.id);
+                drawQuestion(window, rect, question, highlight, selected, content, ...
+                    config, diodeRect, false);
+                Screen('Flip', window, flipTime + flashOff);
+                KbQueueFlush;
+                continue;
+            elseif action == "enter" && selected > 0
+                submitTime = actionTime;
+                choice = question.choices(selected);
+                drawQuestion(window, rect, question, highlight, selected, content, ...
+                    config, diodeRect, true);
+                flipTime = Screen('Flip', window);
+                emitAfterPhotodiode(state, config, flipTime, 'ANSWER_SUBMIT', ...
+                    story.id, question.id, choice.id);
+                isCorrect = strcmp(choice.id, question.correct_choice_id);
+                fprintf(state.responseFile, '%s,%s,%s,%s,%s,%d,%.9f,%.9f,%.9f\n', ...
+                    csvText(story.id), csvText(question.id), csvText(choice.id), ...
+                    csvText(choice.text), csvText(question.correct_choice_id), ...
+                    isCorrect, questionOnset, pickTime, submitTime);
+                break;
+            end
+            drawQuestion(window, rect, question, highlight, selected, content, ...
+                config, diodeRect, false);
+            Screen('Flip', window);
+            KbQueueFlush;
+        end
+    end
 end
 end
 
-function drawReady3(window, rect, block, config, diodeRect, on)
-Screen('FillRect', window, config.display.background_rgb(:)'); Screen('TextSize', window, 42);
-DrawFormattedText(window, block.ready_title, 'center', RectHeight(rect)*0.25, config.display.text_rgb(:)');
-Screen('TextSize', window, 28); DrawFormattedText(window, block.ready_text, 'center', RectHeight(rect)*0.45, config.display.text_rgb(:)', 60);
-DrawFormattedText(window, block.ready_prompt, 'center', RectHeight(rect)*0.75, config.display.text_rgb(:)');
-drawDiode3(window, config, diodeRect, on);
+function drawReady(window, rect, titleText, prompt, config, diodeRect, diodeOn)
+Screen('FillRect', window, config.display.background_rgb(:)');
+Screen('TextSize', window, config.block3.title_size);
+DrawFormattedText(window, titleText, 'center', RectHeight(rect) * 0.32, config.display.text_rgb(:)');
+Screen('TextSize', window, config.block3.question_size);
+DrawFormattedText(window, prompt, 'center', RectHeight(rect) * 0.58, config.display.text_rgb(:)');
+drawDiode(window, config, diodeRect, diodeOn);
 end
 
-function drawImage3(window, texture, destination, config, diodeRect, on)
-Screen('FillRect', window, config.display.background_rgb(:)'); Screen('DrawTexture', window, texture, [], destination);
-drawDiode3(window, config, diodeRect, on);
+function drawListening(window, ~, textValue, config, diodeRect, diodeOn)
+Screen('FillRect', window, config.display.background_rgb(:)');
+Screen('TextSize', window, config.block3.question_size);
+DrawFormattedText(window, textValue, 'center', 'center', config.display.text_rgb(:)');
+drawDiode(window, config, diodeRect, diodeOn);
 end
 
-function destination = fitTextureRect(source, target, fraction)
-scale = min(RectWidth(target)*fraction/RectWidth(source), RectHeight(target)*fraction/RectHeight(source));
-destination = CenterRectOnPointd([0 0 RectWidth(source)*scale RectHeight(source)*scale], RectWidth(target)/2, RectHeight(target)/2);
+function drawQuestion(window, rect, question, highlight, selected, content, config, diodeRect, diodeOn)
+Screen('FillRect', window, config.display.background_rgb(:)');
+Screen('TextSize', window, config.block3.question_size);
+DrawFormattedText(window, question.text, 'center', RectHeight(rect) * 0.16, config.display.text_rgb(:)', 52);
+for index = 1:numel(question.choices)
+    choice = question.choices(index);
+    prefix = '  ';
+    color = config.display.text_rgb(:)';
+    if index == highlight
+        prefix = '> ';
+        color = config.block3.highlight_rgb(:)';
+    end
+    if index == selected
+        prefix = 'X ';
+        color = config.block3.selected_rgb(:)';
+    end
+    Screen('TextSize', window, config.block3.choice_size);
+    DrawFormattedText(window, [prefix choice.text], RectWidth(rect) * 0.25, ...
+        RectHeight(rect) * (0.38 + 0.12 * (index - 1)), color, 45);
+end
+if selected == 0
+    prompt = content.question_navigation_prompt;
+else
+    prompt = content.question_submit_prompt;
+end
+Screen('TextSize', window, config.block3.footer_size);
+DrawFormattedText(window, prompt, 'center', RectHeight(rect) * 0.82, config.display.text_rgb(:)', 70);
+drawDiode(window, config, diodeRect, diodeOn);
 end
 
-function rect = makeDiodeRect3(windowRect, diode)
-rect = [diode.margin_px, RectHeight(windowRect)-diode.margin_px-diode.size_px(2), diode.margin_px+diode.size_px(1), RectHeight(windowRect)-diode.margin_px];
+function rect = makeDiodeRect(windowRect, diode)
+w = diode.size_px(1); h = diode.size_px(2); margin = diode.margin_px;
+rect = [margin, RectHeight(windowRect)-margin-h, margin+w, RectHeight(windowRect)-margin];
 end
-function drawDiode3(window, config, rect, on)
+
+function drawDiode(window, config, rect, isOn)
 if ~config.photodiode.enabled, return; end
-if on, color=config.photodiode.on_rgb; else, color=config.photodiode.off_rgb; end
+if isOn, color = config.photodiode.on_rgb; else, color = config.photodiode.off_rgb; end
 Screen('FillRect', window, color(:)', rect);
 end
-function emit3(fileId, config, timestamp, eventName, trial, imageName, keyTime)
-comment = sprintf('B3_%s trial=%d image=%s', eventName, trial, imageName);
-if strlength(comment)>127, error('ImaginedSpeech:CommentTooLong','Cbmex comment too long.'); end
-send_task_event_comment(config,comment);
-fprintf(fileId,'%.9f,%s,%d,%s,%.9f\n',timestamp,eventName,trial,imageName,keyTime);
+
+function emitAfterPhotodiode(state, config, timestamp, eventName, storyId, questionId, choiceId)
+comment = sprintf('B3_%s story=%s', eventName, storyId);
+if ~isempty(questionId), comment = sprintf('%s q=%s', comment, questionId); end
+if ~isempty(choiceId), comment = sprintf('%s choice=%s', comment, choiceId); end
+if strlength(comment) > 127, error('ImaginedSpeech:CommentTooLong', 'Cbmex comment exceeds 127 characters.'); end
+% Ordering is intentional: caller's Screen flip (photodiode) has completed
+% before this function sends the higher-latency Cbmex comment.
+send_task_event_comment(config, comment);
+fprintf(state.eventFile, '%.9f,%s,%s,%s,%s\n', timestamp, eventName, ...
+    storyId, questionId, choiceId);
 end
-function proceed = waitReady3(keys, testResponses)
-KbQueueFlush; proceed=false; auto=~isempty(testResponses); if auto, deadline=GetSecs+0.1; else, deadline=Inf; end
-while GetSecs<deadline
-    [pressed,first]=KbQueueCheck; if pressed && first(keys.escape)>0, return; end
-    if pressed && first(keys.enter)>0, proceed=true; return; end
-    WaitSecs('YieldSecs',0.005);
+
+function proceed = waitForEnter(keys, autoSeconds)
+KbQueueFlush; proceed = false;
+if autoSeconds > 0, deadline = GetSecs + autoSeconds; else, deadline = Inf; end
+while GetSecs < deadline
+    [pressed, first] = KbQueueCheck;
+    if pressed
+        if first(keys.escape) > 0, return; end
+        if first(keys.enter) > 0, proceed = true; return; end
+        KbQueueFlush;
+    end
+    WaitSecs('YieldSecs', 0.005);
 end
-proceed=true;
+proceed = true;
 end
-function value=csv3(value), value=['"' strrep(char(value),'"','""') '"']; end
-function cleanupQueue(), try, KbQueueStop; catch, end, try, KbQueueRelease; catch, end, end
-function cleanupTextures(textureHandles), try, Screen('Close', textureHandles); catch, end, end
-function cleanupFiles(a,b), if a>=0, fclose(a); end, if b>=0, fclose(b); end, end
-function cleanupScreen(oldSkip), ShowCursor; Priority(0); Screen('CloseAll'); Screen('Preference','SkipSyncTests',oldSkip); end
+
+function proceed = waitForStory(audioHandle, escapeKey, maxSeconds)
+proceed = true; startTime = GetSecs; KbQueueFlush;
+while PsychPortAudio('GetStatus', audioHandle).Active
+    [pressed, first] = KbQueueCheck;
+    if pressed && first(escapeKey) > 0, proceed = false; return; end
+    if maxSeconds > 0 && GetSecs - startTime >= maxSeconds
+        PsychPortAudio('Stop', audioHandle, 0); return;
+    end
+    WaitSecs('YieldSecs', 0.01);
+end
+end
+
+function [action, timestamp] = waitForQuestionAction(keys, autoSeconds)
+if autoSeconds > 0, deadline = GetSecs + autoSeconds; else, deadline = Inf; end
+while GetSecs < deadline
+    [pressed, first] = KbQueueCheck;
+    if pressed
+        if first(keys.escape) > 0, action = "abort"; timestamp = first(keys.escape); return; end
+        if first(keys.up) > 0, action = "up"; timestamp = first(keys.up); return; end
+        if first(keys.down) > 0, action = "down"; timestamp = first(keys.down); return; end
+        if first(keys.deselect) > 0, action = "deselect"; timestamp = first(keys.deselect); return; end
+        if first(keys.enter) > 0, action = "enter"; timestamp = first(keys.enter); return; end
+        KbQueueFlush;
+    end
+    WaitSecs('YieldSecs', 0.005);
+end
+action = "enter"; timestamp = GetSecs;
+end
+
+function value = csvText(value)
+value = ['"' strrep(char(value), '"', '""') '"'];
+end
+
+function cleanupBlock3Audio(audioHandle)
+try, PsychPortAudio('Stop', audioHandle, 0); catch, end
+try, PsychPortAudio('Close', audioHandle); catch, end
+end
+
+function cleanupBlock3Queue()
+try, KbQueueStop; catch, end
+try, KbQueueRelease; catch, end
+end
+
+function cleanupBlock3Files(eventFile, responseFile)
+if eventFile >= 0, fclose(eventFile); end
+if responseFile >= 0, fclose(responseFile); end
+end
+
+function cleanupBlock3Screen(oldSkip)
+try, ShowCursor; catch, end
+try, Priority(0); catch, end
+try, Screen('CloseAll'); catch, end
+try, Screen('Preference', 'SkipSyncTests', oldSkip); catch, end
+end

@@ -15,8 +15,12 @@ KbQueueCreate([],allowed); KbQueueStart; queueCleanup=onCleanup(@cleanupQueue4);
 screens=Screen('Screens'); if config.display.screen_index<0, screenIndex=max(screens); else, screenIndex=config.display.screen_index; end
 windowRect=[]; if config.display.debug_windowed, windowRect=config.display.debug_window_rect(:)'; end
 [window,rect]=PsychImaging('OpenWindow',screenIndex,config.display.background_rgb(:)',windowRect);
-HideCursor(window); Screen('TextFont',window,config.display.font_name); ifi=Screen('GetFlipInterval',window);
+HideCursor(window); Priority(MaxPriority(window)); Screen('TextFont',window,config.display.font_name); ifi=Screen('GetFlipInterval',window);
 diodeRect=[config.photodiode.margin_px, RectHeight(rect)-config.photodiode.margin_px-config.photodiode.size_px(2), config.photodiode.margin_px+config.photodiode.size_px(1), RectHeight(rect)-config.photodiode.margin_px];
+% Hold each sync flash on for flash_frames refresh cycles (not just one) so a
+% single dropped/jittered frame can't make the pulse too brief for the
+% photodiode/DAQ to reliably register.
+flashOff=(config.photodiode.flash_frames-0.5)*ifi;
 
 toneState=init_sync_tones(config);
 toneCleanup=onCleanup(@()finish_sync_tones(toneState));
@@ -44,25 +48,35 @@ for sectionIndex=1:numel(survey.sections)
         drawItem4(window,rect,section,item,survey,highlight,selected,itemNumber,config,diodeRect,true);
         onset=Screen('Flip',window); play_sync_tone(toneState,'block4_question_onset'); emit4(eventFile,config,onset,'QUESTION_SHOW',section.id,item.id,'',NaN);
         drawItem4(window,rect,section,item,survey,highlight,selected,itemNumber,config,diodeRect,false);
-        Screen('Flip',window,onset+0.5*ifi); KbQueueFlush;
+        Screen('Flip',window,onset+flashOff); KbQueueFlush;
         pickTime=NaN;
         while true
             [action,actionTime]=waitAction4(keys,config.block4.test_auto_advance_seconds);
             if action=="abort", task_killed;
-            elseif action=="up" && selected==0, highlight=mod(highlight-2,numel(survey.choices))+1;
-            elseif action=="down" && selected==0, highlight=mod(highlight,numel(survey.choices))+1;
+            elseif action=="up" && selected==0
+                highlight=mod(highlight-2,numel(survey.choices))+1;
+                drawItem4(window,rect,section,item,survey,highlight,selected,itemNumber,config,diodeRect,true);
+                flash=Screen('Flip',window); emit4(eventFile,config,flash,'HIGHLIGHT_MOVE',section.id,item.id,'up',highlight);
+                drawItem4(window,rect,section,item,survey,highlight,selected,itemNumber,config,diodeRect,false);
+                Screen('Flip',window,flash+flashOff); KbQueueFlush; continue;
+            elseif action=="down" && selected==0
+                highlight=mod(highlight,numel(survey.choices))+1;
+                drawItem4(window,rect,section,item,survey,highlight,selected,itemNumber,config,diodeRect,true);
+                flash=Screen('Flip',window); emit4(eventFile,config,flash,'HIGHLIGHT_MOVE',section.id,item.id,'down',highlight);
+                drawItem4(window,rect,section,item,survey,highlight,selected,itemNumber,config,diodeRect,false);
+                Screen('Flip',window,flash+flashOff); KbQueueFlush; continue;
             elseif action=="enter" && selected==0
                 selected=highlight; pickTime=actionTime; choice=survey.choices(selected);
                 drawItem4(window,rect,section,item,survey,highlight,selected,itemNumber,config,diodeRect,true);
                 flash=Screen('Flip',window); emit4(eventFile,config,flash,'ANSWER_PICK',section.id,item.id,choice.id,choice.value);
                 drawItem4(window,rect,section,item,survey,highlight,selected,itemNumber,config,diodeRect,false);
-                Screen('Flip',window,flash+0.5*ifi); KbQueueFlush; continue;
+                Screen('Flip',window,flash+flashOff); KbQueueFlush; continue;
             elseif action=="deselect" && selected>0
                 previousChoice=survey.choices(selected); selected=0; pickTime=NaN;
                 drawItem4(window,rect,section,item,survey,highlight,selected,itemNumber,config,diodeRect,true);
                 flash=Screen('Flip',window); emit4(eventFile,config,flash,'ANSWER_DESELECT',section.id,item.id,previousChoice.id,previousChoice.value);
                 drawItem4(window,rect,section,item,survey,highlight,selected,itemNumber,config,diodeRect,false);
-                Screen('Flip',window,flash+0.5*ifi); KbQueueFlush; continue;
+                Screen('Flip',window,flash+flashOff); KbQueueFlush; continue;
             elseif action=="enter" && selected>0
                 submitTime=actionTime; choice=survey.choices(selected);
                 drawItem4(window,rect,section,item,survey,highlight,selected,itemNumber,config,diodeRect,true);
@@ -92,4 +106,4 @@ function [a,t]=waitAction4(k,auto),if auto>0,d=GetSecs+auto;else,d=Inf;end,while
 function v=csv4(v),v=['"' strrep(char(v),'"','""') '"'];end
 function cleanupQueue4(),try,KbQueueStop;catch,end,try,KbQueueRelease;catch,end,end
 function cleanupFiles4(a,b),if a>=0,fclose(a);end,if b>=0,fclose(b);end,end
-function cleanupScreen4(o),ShowCursor;Priority(0);Screen('CloseAll');Screen('Preference','SkipSyncTests',o);end
+function cleanupScreen4(o),try,ShowCursor;catch,end,try,Priority(0);catch,end,try,Screen('CloseAll');catch,end,try,Screen('Preference','SkipSyncTests',o);catch,end,end

@@ -26,19 +26,8 @@
     "auto_advance_seconds": 0
   },
   "block1": {
-    "content_file": "stories/block1_stories.json",
-    "title_size": 44,
-    "question_size": 34,
-    "choice_size": 30,
-    "footer_size": 21,
-    "selected_rgb": [70, 150, 255],
-    "highlight_rgb": [255, 220, 80],
-    "test_auto_advance_seconds": 0,
-    "test_max_story_seconds": 0
-  },
-  "block2": {
-    "content_file": "speech/block2_manifest.json",
-    "presentation_mode": "both",
+    "content_file": "speech/block1_manifest.json",
+    "presentation_mode": "listening", 
     "reading_only_word_seconds": 0.5,
     "reading_only_phrase_seconds": 1.0,
     "reveal_seconds": 0.5,
@@ -56,13 +45,24 @@
     "test_timing_scale": 1.0,
     "test_early_end_trials": []
   },
-  "block3": {
-    "content_file": "images/block3_manifest.json",
+  "block2": {
+    "content_file": "images/block2_manifest.json",
     "image_on_seconds": 0.5,
     "image_off_seconds": 0.5,
     "image_display_fraction": 0.6,
     "test_max_trials": 0,
     "test_response_trials": []
+  },
+  "block3": {
+    "content_file": "stories/block3_stories.json",
+    "title_size": 44,
+    "question_size": 34,
+    "choice_size": 30,
+    "footer_size": 21,
+    "selected_rgb": [70, 150, 255],
+    "highlight_rgb": [255, 220, 80],
+    "test_auto_advance_seconds": 0,
+    "test_max_story_seconds": 0
   },
   "block4": {
     "content_file": "surveys/vviq.json",
@@ -79,15 +79,16 @@
     "deselect": "BackSpace"
   },
   "photodiode": {
-    "enabled": false,
+    "enabled": true,
     "position": "bottom_left",
     "size_px": [100, 100],
     "margin_px": 20,
     "on_rgb": [255, 255, 255],
-    "off_rgb": [0, 0, 0]
+    "off_rgb": [0, 0, 0],
+    "flash_frames": 3
   },
   "cbmex": {
-    "enabled": false,
+    "enabled": true,
     "task_name": "ImaginedSpeech",
     "comment_rgba": 16777215,
     "comment_charset": 0
@@ -100,17 +101,17 @@
     "tones": {
       "block_start": { "frequency_hz": 1000, "duration_ms": 100 },
       "block_end": { "frequency_hz": 500, "duration_ms": 100 },
-      "block1_question_onset": { "frequency_hz": 1400, "duration_ms": 60 },
-      "block2_reading_stimulus_onset": { "frequency_hz": 1400, "duration_ms": 60 },
-      "block2_early_response": { "frequency_hz": 900, "duration_ms": 60 },
-      "block3_image_onset": { "frequency_hz": 1400, "duration_ms": 60 },
-      "block3_response": { "frequency_hz": 900, "duration_ms": 60 },
+      "block1_reading_stimulus_onset": { "frequency_hz": 1400, "duration_ms": 60 },
+      "block1_early_response": { "frequency_hz": 900, "duration_ms": 60 },
+      "block2_image_onset": { "frequency_hz": 1400, "duration_ms": 60 },
+      "block2_response": { "frequency_hz": 900, "duration_ms": 60 },
+      "block3_question_onset": { "frequency_hz": 1400, "duration_ms": 60 },
       "block4_question_onset": { "frequency_hz": 1400, "duration_ms": 60 }
     }
   },
   "paths": {
     "task_data": "task_data",
     "output": "output",
-    "patient_data": "C:\\Users\\lizzi\\Documents\\MATLAB\\PatientData"
+    "patient_data": "C:\\Users\\EMU - Behavior\\Documents\\MATLAB\\PatientData"
   }
 }

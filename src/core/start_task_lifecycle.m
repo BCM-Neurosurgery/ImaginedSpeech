@@ -34,7 +34,7 @@ try
     if isempty(emuNumber) || ~isscalar(emuNumber) || ~isfinite(emuNumber)
         error('ImaginedSpeech:InvalidPatientLog','Could not obtain the next EMU log number.');
     end
-    taskStem = sprintf('%s_Block%d_%s',config.cbmex.task_name,blockNumber,config.session.patient_id);
+    taskStem = sprintf('%s_%s_%s',config.cbmex.task_name,task_block_name(blockNumber),config.session.patient_id);
     taskId = sprintf('EMU-%04d_%s',emuNumber,taskStem);
     if numel(taskId)+7 > 92
         error('ImaginedSpeech:TaskIdTooLong','Task ID exceeds TaskComment''s 92-character limit.');
