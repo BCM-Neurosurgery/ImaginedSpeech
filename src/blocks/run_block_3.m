@@ -302,13 +302,28 @@ function proceed = waitForStory(audioHandle, keys, maxSeconds, window, config, d
 % the loop's stopping condition is the analytically-known story duration,
 % exactly like every other pausable phase in this task, rather than
 % repeatedly polling audio device status. An earlier version of this
-% function drove the while-loop off GetStatus().Active, and on real
-% hardware that left Escape/pause completely undetected for the entire
-% story -- reproduced in isolation (a synthetic tone exited its wait loop in
-% ~0.001s instead of the expected ~1.35s remaining after a simulated pause,
-% because a non-blocking PsychPortAudio Start can return before Active
-% actually flips true) and fixed by never letting audio-device status decide
-% how long this loop keeps polling for keys.
+% function drove the while-loop off GetStatus().Active, which was suspected
+% of (and reproduced as) making a non-blocking resume Start's Active flag
+% read false too early; that fix alone did not resolve real-hardware
+% unresponsiveness during the story, which pointed at a second, independent
+% cause below.
+%
+% This wait also temporarily drops MATLAB's OS scheduling priority back to
+% normal for its duration (restored on every exit path via onCleanup). The
+% block raises priority to MaxPriority(window) to protect Screen('Flip', ...)
+% timing against OS preemption, but no further flip happens anywhere in this
+% function until it returns -- there is nothing timing-critical here for
+% elevated priority to protect. Running a multi-minute busy-poll loop at
+% elevated OS priority is suspected of starving the keyboard input path
+% (PsychHID's listener) of enough scheduling time to ever deliver a
+% keypress into the KbQueue, which would explain why Escape/pause were
+% undetectable for an entire story on real hardware despite this loop's
+% logic checking for them every ~10ms: short clips (Block 1) never run long
+% enough at elevated priority for that starvation to compound into total
+% unresponsiveness, but a multi-minute story does.
+priorPriority = Priority(0);
+restorePriority = onCleanup(@() Priority(priorPriority));
+
 proceed = true; playStart = GetSecs; deadline = playStart + storyDuration;
 if maxSeconds > 0, deadline = min(deadline, playStart + maxSeconds); end
 KbQueueFlush;

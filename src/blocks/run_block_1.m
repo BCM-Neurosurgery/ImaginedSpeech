@@ -117,6 +117,18 @@ function ok=waitAudio1(h,keys,maxSeconds,window,config,diodeRect,ifi,eventFile,t
 % undetected for the entire clip -- reproduced and fixed for the long-audio
 % case in Block 3; ported the same fix here since word/phrase clips are
 % short enough that the same latent bug would be easy to miss in testing.
+%
+% Also drops OS priority to normal for this wait's duration (restored on
+% every exit path via onCleanup), same as Block 3's story wait: no further
+% Flip happens until this function returns, so elevated priority protects
+% nothing here, and holding it through a long busy-poll is suspected of
+% starving the keyboard listener thread of CPU time. Applied here
+% preventatively for architectural consistency with Block 3's confirmed
+% fix, even though word/phrase clips are short enough that this was never
+% observed to actually manifest in Block 1.
+priorPriority=Priority(0);
+restorePriority=onCleanup(@()Priority(priorPriority));
+
 ok=true;playStart=GetSecs;deadline=playStart+audioDuration;
 if maxSeconds>0,deadline=min(deadline,playStart+maxSeconds);end
 KbQueueFlush;
