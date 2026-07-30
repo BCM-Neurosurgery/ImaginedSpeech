@@ -36,6 +36,8 @@ The current schedule has 540 randomized trials:
 - 75 spoken-phrase trials: 15 phrases × 5 repetitions.
 - 75 imagined-speech phrase trials: 15 phrases × 5 repetitions.
 
+`config.block1.start_trial` (default 1) sets which schedule row the run begins at, so a session can resume from a specific trial (e.g. after an interruption) instead of always restarting at row 1. It is validated against the actual number of trials in the run (post any `test_max_trials` cap) before the window opens; an out-of-range value fails loudly rather than silently clamping. Trial numbers in the logs/comments always reflect the row's true position in the full schedule, not a renumbered 1-based count, so a resumed run's output stays directly comparable to the original.
+
 Each row of `AAC_trial_schedule.csv` supplies the stimulus text, trial type, silent-period duration, and inter-trial interval. The intended trial sequence is:
 
 1. Present the word/phrase per `config.block1.presentation_mode` (`"listening"`, `"reading"`, or `"both"` — default `"both"`, matching the original listening+reading behavior) and play its associated audio for the audio duration when the mode includes listening.
