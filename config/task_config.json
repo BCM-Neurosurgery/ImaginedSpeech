@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "display": {
-    "screen_index": 2,
+    "screen_index": 0,
     "background_rgb": [0, 0, 0],
     "text_rgb": [255, 255, 255],
     "font_name": "Arial",
@@ -31,8 +31,8 @@
     "reading_only_word_seconds": 0.5,
     "reading_only_phrase_seconds": 1.0,
     "reveal_seconds": 1.0,
-    "word_action_seconds": 3.0,
-    "phrase_action_seconds": 5.0,
+    "word_action_seconds": 2.0,
+    "phrase_action_seconds": 3.0,
     "cue_square_size_px": 180,
     "stimulus_text_size": 48,
     "action_text_size": 42,
@@ -40,7 +40,7 @@
     "use_schedule_iti": false,
     "default_silence_seconds": 1.25,
     "default_iti_seconds": 1.25,
-    "start_trial": 133,
+    "start_trial": 1,
     "test_max_trials": 0,
     "test_audio_max_seconds": 0,
     "test_timing_scale": 1.0,
@@ -83,7 +83,7 @@
     "pause": "p"
   },
   "photodiode": {
-    "enabled": false,
+    "enabled": true,
     "position": "bottom_left",
     "size_px": [100, 100],
     "margin_px": 20,
@@ -99,7 +99,7 @@
     "use_patient_log": true
   },
   "matcbsdk": {
-    "enabled": true,
+    "enabled": false,
     "task_name": "ImaginedSpeech",
     "comment_rgba": 16777215,
     "comment_charset": 0,
@@ -108,7 +108,7 @@
     "use_patient_log": false
   },
   "audio_sync": {
-    "enabled": true,
+    "enabled": false,
     "device_index": -1,
     "sample_rate": 44100,
     "volume": 0.3,
