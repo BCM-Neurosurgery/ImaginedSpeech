@@ -3,9 +3,6 @@ function run_block_1(config)
 
 block=load_block1_content(config.block1.content_file);
 if ~isfield(config,'session')||~isfolder(config.session.directory),error('ImaginedSpeech:MissingSession','Block 1 requires an initialized patient session.');end
-trialCount=height(block.schedule);if config.block1.test_max_trials>0,trialCount=min(trialCount,config.block1.test_max_trials);end
-startTrial=config.block1.start_trial;
-if startTrial>trialCount,error('ImaginedSpeech:InvalidStartTrial','block1.start_trial (%d) exceeds the number of trials in this run (%d).',startTrial,trialCount);end
 oldSkip=Screen('Preference','SkipSyncTests',double(config.display.skip_sync_tests)); screenCleanup=onCleanup(@()cleanupScreen1(oldSkip));
 KbName('UnifyKeyNames'); keys.enter=KbName('Return'); keys.escape=KbName(config.keys.abort); keys.pause=KbName(config.keys.pause); allowed=zeros(1,256);allowed([keys.enter keys.escape keys.pause])=1;KbQueueCreate([],allowed);KbQueueStart;queueCleanup=onCleanup(@cleanupQueue1);
 screens=Screen('Screens');if config.display.screen_index<0,screenIndex=max(screens);else,screenIndex=config.display.screen_index;end
