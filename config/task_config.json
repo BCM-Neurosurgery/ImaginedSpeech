@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "display": {
-    "screen_index": 1,
+    "screen_index": 2,
     "background_rgb": [0, 0, 0],
     "text_rgb": [255, 255, 255],
     "font_name": "Arial",
@@ -40,7 +40,7 @@
     "use_schedule_iti": false,
     "default_silence_seconds": 1.25,
     "default_iti_seconds": 1.25,
-    "start_trial": 1,
+    "start_trial": 133,
     "test_max_trials": 0,
     "test_audio_max_seconds": 0,
     "test_timing_scale": 1.0,
