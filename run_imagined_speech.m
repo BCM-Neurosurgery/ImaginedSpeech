@@ -1,4 +1,5 @@
 
+
 function run_imagined_speech()
 %RUN_IMAGINED_SPEECH Launch the Imagined Speech block selector.
 
@@ -7,6 +8,7 @@ addpath(fullfile(projectRoot, 'src', 'config'));
 addpath(fullfile(projectRoot, 'src', 'core'));
 addpath(fullfile(projectRoot, 'src', 'blocks'));
 addpath(fullfile(projectRoot, 'src', 'io'));
+
 
 configPath = fullfile(projectRoot, 'config', 'task_config.json');
 config = load_task_config(configPath, projectRoot);
@@ -23,7 +25,7 @@ config.session = create_patient_session(config.paths.patient_data, patientId);
 blockRunners = {@run_block_0, @run_block_1, @run_block_2, ...
     @run_block_3, @run_block_4};
 lifecycle = start_task_lifecycle(config, blockNumber);
-config.cbmex.lifecycle = lifecycle;
+config.comment_lifecycle = lifecycle;
 fprintf('[lifecycle] Block %d starting (task_id=%s)\n', blockNumber, lifecycle.task_id);
 try
     blockRunners{blockNumber + 1}(config);

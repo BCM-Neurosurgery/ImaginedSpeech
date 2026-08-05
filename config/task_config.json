@@ -27,13 +27,12 @@
   },
   "block1": {
     "content_file": "speech/block1_manifest.json",
-    "start_trial": 370,
     "presentation_mode": "listening",
     "reading_only_word_seconds": 0.5,
     "reading_only_phrase_seconds": 1.0,
-    "reveal_seconds": 0.6,
-    "word_action_seconds": 2.0,
-    "phrase_action_seconds": 3.0,
+    "reveal_seconds": 1.0,
+    "word_action_seconds": 3.0,
+    "phrase_action_seconds": 5.0,
     "cue_square_size_px": 180,
     "stimulus_text_size": 48,
     "action_text_size": 42,
@@ -41,6 +40,7 @@
     "use_schedule_iti": false,
     "default_silence_seconds": 1.25,
     "default_iti_seconds": 1.25,
+    "start_trial": 1,
     "test_max_trials": 0,
     "test_audio_max_seconds": 0,
     "test_timing_scale": 1.0,
@@ -51,6 +51,7 @@
     "image_on_seconds": 0.5,
     "image_off_seconds": 0.5,
     "image_display_fraction": 0.6,
+    "start_trial": 1,
     "test_max_trials": 0,
     "test_response_trials": []
   },
@@ -62,6 +63,7 @@
     "footer_size": 21,
     "selected_rgb": [70, 150, 255],
     "highlight_rgb": [255, 220, 80],
+    "start_position": "story_1",
     "test_auto_advance_seconds": 0,
     "test_max_story_seconds": 0
   },
@@ -77,10 +79,11 @@
   },
   "keys": {
     "abort": "ESCAPE",
-    "deselect": "BackSpace"
+    "deselect": "BackSpace",
+    "pause": "p"
   },
   "photodiode": {
-    "enabled": true,
+    "enabled": false,
     "position": "bottom_left",
     "size_px": [100, 100],
     "margin_px": 20,
@@ -89,23 +92,37 @@
     "flash_frames": 3
   },
   "cbmex": {
+    "enabled": false,
+    "task_name": "ImaginedSpeech",
+    "comment_rgba": 16777215,
+    "comment_charset": 0,
+    "use_patient_log": true
+  },
+  "matcbsdk": {
     "enabled": true,
     "task_name": "ImaginedSpeech",
     "comment_rgba": 16777215,
-    "comment_charset": 0
+    "comment_charset": 0,
+    "device_types": ["NSP"],
+    "callback_queue_depth": 16384,
+    "use_patient_log": false
   },
   "audio_sync": {
-    "enabled": false,
+    "enabled": true,
     "device_index": -1,
     "sample_rate": 44100,
     "volume": 0.3,
     "tones": {
       "block_start": { "frequency_hz": 1000, "duration_ms": 100 },
       "block_end": { "frequency_hz": 500, "duration_ms": 100 },
+      "pause_on": { "frequency_hz": 800, "duration_ms": 80, "volume": 0.1 },
+      "pause_resume": { "frequency_hz": 1300, "duration_ms": 80, "volume": 0.1 },
       "block1_reading_stimulus_onset": { "frequency_hz": 1400, "duration_ms": 60 },
       "block1_early_response": { "frequency_hz": 900, "duration_ms": 60 },
-      "block2_image_onset": { "frequency_hz": 1400, "duration_ms": 60 },
-      "block2_response": { "frequency_hz": 900, "duration_ms": 60 },
+      "block1_action_cue_onset": { "frequency_hz": 1200, "duration_ms": 60, "volume": 0.15 },
+      "block1_action_cue_offset": { "frequency_hz": 700, "duration_ms": 60, "volume": 0.15 },
+      "block2_image_onset": { "frequency_hz": 1400, "duration_ms": 60, "volume": 0.15 },
+      "block2_response": { "frequency_hz": 900, "duration_ms": 60, "volume": 0.15 },
       "block3_question_onset": { "frequency_hz": 1400, "duration_ms": 60 },
       "block4_question_onset": { "frequency_hz": 1400, "duration_ms": 60 }
     }
@@ -113,6 +130,6 @@
   "paths": {
     "task_data": "task_data",
     "output": "output",
-    "patient_data": "C:\\Users\\EMU - Behavior\\Documents\\MATLAB\\PatientData"
+    "patient_data": "C:\\Users\\lizzi\\Documents\\PatientData"
   }
 }

@@ -6,6 +6,10 @@ function toneState = init_sync_tones(config)
 % competes with in-progress story/word/phrase audio for a buffer. When
 % audio_sync.enabled is false (the default), this is a no-op: no device is
 % opened and play_sync_tone/finish_sync_tones become no-ops too.
+%
+% Each tone uses audio_sync.volume unless it declares its own volume, e.g.
+% for tones that should play quieter than the block/participant-facing
+% default (audio_sync.tones.<name>.volume).
 
 toneState = struct('enabled', logical(config.audio_sync.enabled), 'handle', -1, 'tones', struct());
 if ~toneState.enabled
@@ -24,7 +28,11 @@ toneNames = fieldnames(config.audio_sync.tones);
 for index = 1:numel(toneNames)
     name = toneNames{index};
     spec = config.audio_sync.tones.(name);
+    volume = config.audio_sync.volume;
+    if isfield(spec, 'volume')
+        volume = spec.volume;
+    end
     toneState.tones.(name) = build_sync_tone(spec.frequency_hz, spec.duration_ms, ...
-        config.audio_sync.sample_rate, config.audio_sync.volume);
+        config.audio_sync.sample_rate, volume);
 end
 end
